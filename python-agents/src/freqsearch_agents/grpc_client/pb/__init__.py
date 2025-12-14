@@ -1,6 +1,6 @@
 """Generated protobuf and gRPC code for FreqSearch."""
 
-from .common_pb2 import (
+from .freqsearch.v1.common_pb2 import (
     PaginationRequest,
     PaginationResponse,
     TimeRange,
@@ -9,7 +9,7 @@ from .common_pb2 import (
     HealthCheckRequest,
     HealthCheckResponse,
 )
-from .strategy_pb2 import (
+from .freqsearch.v1.strategy_pb2 import (
     Strategy,
     StrategyMetadata,
     StrategyWithMetrics,
@@ -21,7 +21,7 @@ from .strategy_pb2 import (
     SearchStrategiesRequest,
     SearchStrategiesResponse,
 )
-from .backtest_pb2 import (
+from .freqsearch.v1.backtest_pb2 import (
     BacktestConfig,
     BacktestJob,
     BacktestResult,
@@ -35,7 +35,7 @@ from .backtest_pb2 import (
     QueryBacktestResultsRequest,
     QueryBacktestResultsResponse,
 )
-from .freqsearch_pb2 import (
+from .freqsearch.v1.freqsearch_pb2 import (
     OptimizationRun,
     OptimizationConfig,
     OptimizationCriteria,
@@ -47,7 +47,7 @@ from .freqsearch_pb2 import (
     GetOptimizationRunRequest,
     GetOptimizationRunResponse,
 )
-from .freqsearch_pb2_grpc import (
+from .freqsearch.v1.freqsearch_pb2_grpc import (
     FreqSearchServiceStub,
     FreqSearchServiceServicer,
     add_FreqSearchServiceServicer_to_server,

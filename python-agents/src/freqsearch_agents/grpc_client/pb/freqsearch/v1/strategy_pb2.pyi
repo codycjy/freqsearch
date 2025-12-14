@@ -10,8 +10,22 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class StrategyTags(_message.Message):
+    __slots__ = ("strategy_type", "risk_level", "trading_style", "indicators", "market_regime")
+    STRATEGY_TYPE_FIELD_NUMBER: _ClassVar[int]
+    RISK_LEVEL_FIELD_NUMBER: _ClassVar[int]
+    TRADING_STYLE_FIELD_NUMBER: _ClassVar[int]
+    INDICATORS_FIELD_NUMBER: _ClassVar[int]
+    MARKET_REGIME_FIELD_NUMBER: _ClassVar[int]
+    strategy_type: _containers.RepeatedScalarFieldContainer[str]
+    risk_level: str
+    trading_style: str
+    indicators: _containers.RepeatedScalarFieldContainer[str]
+    market_regime: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, strategy_type: _Optional[_Iterable[str]] = ..., risk_level: _Optional[str] = ..., trading_style: _Optional[str] = ..., indicators: _Optional[_Iterable[str]] = ..., market_regime: _Optional[_Iterable[str]] = ...) -> None: ...
+
 class Strategy(_message.Message):
-    __slots__ = ("id", "name", "code", "code_hash", "parent_id", "generation", "description", "metadata", "created_at", "updated_at")
+    __slots__ = ("id", "name", "code", "code_hash", "parent_id", "generation", "description", "metadata", "tags", "created_at", "updated_at")
     ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     CODE_FIELD_NUMBER: _ClassVar[int]
@@ -20,6 +34,7 @@ class Strategy(_message.Message):
     GENERATION_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
     METADATA_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
     CREATED_AT_FIELD_NUMBER: _ClassVar[int]
     UPDATED_AT_FIELD_NUMBER: _ClassVar[int]
     id: str
@@ -30,9 +45,10 @@ class Strategy(_message.Message):
     generation: int
     description: str
     metadata: StrategyMetadata
+    tags: StrategyTags
     created_at: _timestamp_pb2.Timestamp
     updated_at: _timestamp_pb2.Timestamp
-    def __init__(self, id: _Optional[str] = ..., name: _Optional[str] = ..., code: _Optional[str] = ..., code_hash: _Optional[str] = ..., parent_id: _Optional[str] = ..., generation: _Optional[int] = ..., description: _Optional[str] = ..., metadata: _Optional[_Union[StrategyMetadata, _Mapping]] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    def __init__(self, id: _Optional[str] = ..., name: _Optional[str] = ..., code: _Optional[str] = ..., code_hash: _Optional[str] = ..., parent_id: _Optional[str] = ..., generation: _Optional[int] = ..., description: _Optional[str] = ..., metadata: _Optional[_Union[StrategyMetadata, _Mapping]] = ..., tags: _Optional[_Union[StrategyTags, _Mapping]] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class StrategyMetadata(_message.Message):
     __slots__ = ("timeframe", "indicators", "stoploss", "trailing_stop", "trailing_stop_positive", "trailing_stop_positive_offset", "minimal_roi", "startup_candle_count")
@@ -90,16 +106,18 @@ class StrategyPerformanceMetrics(_message.Message):
     def __init__(self, sharpe_ratio: _Optional[float] = ..., sortino_ratio: _Optional[float] = ..., profit_pct: _Optional[float] = ..., max_drawdown_pct: _Optional[float] = ..., total_trades: _Optional[int] = ..., win_rate: _Optional[float] = ..., profit_factor: _Optional[float] = ...) -> None: ...
 
 class CreateStrategyRequest(_message.Message):
-    __slots__ = ("name", "code", "parent_id", "description")
+    __slots__ = ("name", "code", "parent_id", "description", "tags")
     NAME_FIELD_NUMBER: _ClassVar[int]
     CODE_FIELD_NUMBER: _ClassVar[int]
     PARENT_ID_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
     name: str
     code: str
     parent_id: str
     description: str
-    def __init__(self, name: _Optional[str] = ..., code: _Optional[str] = ..., parent_id: _Optional[str] = ..., description: _Optional[str] = ...) -> None: ...
+    tags: StrategyTags
+    def __init__(self, name: _Optional[str] = ..., code: _Optional[str] = ..., parent_id: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Union[StrategyTags, _Mapping]] = ...) -> None: ...
 
 class CreateStrategyResponse(_message.Message):
     __slots__ = ("strategy",)
