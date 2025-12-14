@@ -1,0 +1,190 @@
+syntax = "proto3";
+
+package freqsearch.v1;
+
+option go_package = "github.com/saltfish/freqsearch/go-backend/pkg/pb/freqsearch/v1;freqsearchv1";
+
+import "google/protobuf/timestamp.proto";
+import "freqsearch/v1/common.proto";
+import "freqsearch/v1/strategy.proto";
+import "freqsearch/v1/backtest.proto";
+
+// ----- Optimization Types -----
+
+// Optimization run entity
+message OptimizationRun {
+  string id = 1;
+  string name = 2;
+  string base_strategy_id = 3;
+  OptimizationConfig config = 4;
+  OptimizationStatus status = 5;
+  int32 current_iteration = 6;
+  int32 max_iterations = 7;
+  optional string best_strategy_id = 8;
+  optional BacktestResult best_result = 9;
+  string termination_reason = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+  optional google.protobuf.Timestamp completed_at = 13;
+}
+
+// Optimization configuration
+message OptimizationConfig {
+  BacktestConfig backtest_config = 1;
+  int32 max_iterations = 2;
+  OptimizationCriteria criteria = 3;
+  OptimizationMode mode = 4;
+}
+
+// Success criteria for optimization
+message OptimizationCriteria {
+  double min_sharpe = 1;
+  double min_profit_pct = 2;
+  double max_drawdown_pct = 3;
+  int32 min_trades = 4;
+  double min_win_rate = 5;
+}
+
+// Optimization goal
+enum OptimizationMode {
+  OPTIMIZATION_MODE_UNSPECIFIED = 0;
+  OPTIMIZATION_MODE_MAXIMIZE_SHARPE = 1;
+  OPTIMIZATION_MODE_MAXIMIZE_PROFIT = 2;
+  OPTIMIZATION_MODE_MINIMIZE_DRAWDOWN = 3;
+  OPTIMIZATION_MODE_BALANCED = 4;
+}
+
+// Optimization run status
+enum OptimizationStatus {
+  OPTIMIZATION_STATUS_UNSPECIFIED = 0;
+  OPTIMIZATION_STATUS_PENDING = 1;
+  OPTIMIZATION_STATUS_RUNNING = 2;
+  OPTIMIZATION_STATUS_PAUSED = 3;
+  OPTIMIZATION_STATUS_COMPLETED = 4;
+  OPTIMIZATION_STATUS_FAILED = 5;
+  OPTIMIZATION_STATUS_CANCELLED = 6;
+}
+
+// Single iteration in optimization run
+message OptimizationIteration {
+  int32 iteration_number = 1;
+  string strategy_id = 2;
+  string backtest_job_id = 3;
+  optional BacktestResult result = 4;
+  string engineer_changes = 5;    // What the engineer changed
+  string analyst_feedback = 6;    // Analyst's diagnosis
+  ApprovalStatus approval = 7;
+  google.protobuf.Timestamp timestamp = 8;
+}
+
+// ----- Optimization RPCs -----
+
+message StartOptimizationRequest {
+  string name = 1;
+  string base_strategy_id = 2;
+  OptimizationConfig config = 3;
+}
+
+message StartOptimizationResponse {
+  OptimizationRun run = 1;
+}
+
+message GetOptimizationRunRequest {
+  string run_id = 1;
+}
+
+message GetOptimizationRunResponse {
+  OptimizationRun run = 1;
+  repeated OptimizationIteration iterations = 2;
+}
+
+message ControlOptimizationRequest {
+  string run_id = 1;
+  OptimizationAction action = 2;
+}
+
+enum OptimizationAction {
+  OPTIMIZATION_ACTION_UNSPECIFIED = 0;
+  OPTIMIZATION_ACTION_PAUSE = 1;
+  OPTIMIZATION_ACTION_RESUME = 2;
+  OPTIMIZATION_ACTION_CANCEL = 3;
+}
+
+message ControlOptimizationResponse {
+  bool success = 1;
+  OptimizationRun run = 2;
+}
+
+message ListOptimizationRunsRequest {
+  optional OptimizationStatus status = 1;
+  TimeRange time_range = 2;
+  PaginationRequest pagination = 3;
+}
+
+message ListOptimizationRunsResponse {
+  repeated OptimizationRun runs = 1;
+  PaginationResponse pagination = 2;
+}
+
+// ----- Main Service Definition -----
+
+service FreqSearchService {
+  // ===== Strategy Operations =====
+
+  // Create a new strategy
+  rpc CreateStrategy(CreateStrategyRequest) returns (CreateStrategyResponse);
+
+  // Get strategy by ID
+  rpc GetStrategy(GetStrategyRequest) returns (GetStrategyResponse);
+
+  // Search strategies with filters
+  rpc SearchStrategies(SearchStrategiesRequest) returns (SearchStrategiesResponse);
+
+  // Get strategy evolution lineage
+  rpc GetStrategyLineage(GetStrategyLineageRequest) returns (GetStrategyLineageResponse);
+
+  // Delete a strategy
+  rpc DeleteStrategy(DeleteStrategyRequest) returns (DeleteStrategyResponse);
+
+  // ===== Backtest Operations =====
+
+  // Submit a single backtest job
+  rpc SubmitBacktest(SubmitBacktestRequest) returns (SubmitBacktestResponse);
+
+  // Submit multiple backtest jobs (for grid search)
+  rpc SubmitBatchBacktest(SubmitBatchBacktestRequest) returns (SubmitBatchBacktestResponse);
+
+  // Get backtest job status and result
+  rpc GetBacktestJob(GetBacktestJobRequest) returns (GetBacktestJobResponse);
+
+  // Get backtest result only
+  rpc GetBacktestResult(GetBacktestResultRequest) returns (GetBacktestResultResponse);
+
+  // Query backtest results with filters
+  rpc QueryBacktestResults(QueryBacktestResultsRequest) returns (QueryBacktestResultsResponse);
+
+  // Cancel a pending/running backtest
+  rpc CancelBacktest(CancelBacktestRequest) returns (CancelBacktestResponse);
+
+  // Get queue statistics
+  rpc GetQueueStats(GetQueueStatsRequest) returns (GetQueueStatsResponse);
+
+  // ===== Optimization Operations =====
+
+  // Start a new AI optimization run
+  rpc StartOptimization(StartOptimizationRequest) returns (StartOptimizationResponse);
+
+  // Get optimization run details with iterations
+  rpc GetOptimizationRun(GetOptimizationRunRequest) returns (GetOptimizationRunResponse);
+
+  // Control optimization (pause/resume/cancel)
+  rpc ControlOptimization(ControlOptimizationRequest) returns (ControlOptimizationResponse);
+
+  // List optimization runs
+  rpc ListOptimizationRuns(ListOptimizationRunsRequest) returns (ListOptimizationRunsResponse);
+
+  // ===== Health =====
+
+  // Health check endpoint
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}

@@ -1,0 +1,172 @@
+syntax = "proto3";
+
+package freqsearch.v1;
+
+option go_package = "github.com/saltfish/freqsearch/go-backend/pkg/pb/freqsearch/v1;freqsearchv1";
+
+import "google/protobuf/timestamp.proto";
+import "freqsearch/v1/common.proto";
+
+// Backtest configuration parameters
+message BacktestConfig {
+  string exchange = 1;              // e.g., "okx", "binance"
+  repeated string pairs = 2;        // e.g., ["BTC/USDT", "ETH/USDT"]
+  string timeframe = 3;             // e.g., "5m", "1h"
+  string timerange_start = 4;       // e.g., "20241001"
+  string timerange_end = 5;         // e.g., "20241201"
+  double dry_run_wallet = 6;        // Initial wallet balance
+  int32 max_open_trades = 7;        // Max concurrent trades
+  string stake_amount = 8;          // e.g., "unlimited" or "100"
+}
+
+// Backtest job entity
+message BacktestJob {
+  string id = 1;
+  string strategy_id = 2;
+  optional string optimization_run_id = 3;
+  BacktestConfig config = 4;
+  JobStatus status = 5;
+  optional string container_id = 6;   // Docker container ID
+  optional string error_message = 7;
+  int32 priority = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp completed_at = 11;
+}
+
+// Backtest result entity
+message BacktestResult {
+  string id = 1;
+  string job_id = 2;
+  string strategy_id = 3;
+
+  // Trade statistics
+  int32 total_trades = 4;
+  int32 winning_trades = 5;
+  int32 losing_trades = 6;
+  double win_rate = 7;
+
+  // Profit metrics
+  double profit_total = 8;          // Absolute profit in base currency
+  double profit_pct = 9;            // Percentage profit
+  double profit_factor = 10;        // Gross profit / Gross loss
+
+  // Risk metrics
+  double max_drawdown = 11;         // Absolute max drawdown
+  double max_drawdown_pct = 12;     // Percentage max drawdown
+  double sharpe_ratio = 13;
+  double sortino_ratio = 14;
+  double calmar_ratio = 15;
+
+  // Trade duration metrics
+  double avg_trade_duration_minutes = 16;
+  double avg_profit_per_trade = 17;
+  double best_trade_pct = 18;
+  double worst_trade_pct = 19;
+
+  // Per-pair breakdown
+  repeated PairResult pair_results = 20;
+
+  // Raw data
+  string raw_log = 21;              // Full Freqtrade output log
+  optional string trades_json = 22; // JSON array of individual trades
+
+  google.protobuf.Timestamp created_at = 23;
+}
+
+// Per-pair backtest results
+message PairResult {
+  string pair = 1;
+  int32 trades = 2;
+  double profit_pct = 3;
+  double win_rate = 4;
+  double avg_duration_minutes = 5;
+}
+
+// ----- Backtest Service RPCs -----
+
+message SubmitBacktestRequest {
+  string strategy_id = 1;
+  BacktestConfig config = 2;
+  optional string optimization_run_id = 3;
+  int32 priority = 4;  // Higher priority = processed first
+}
+
+message SubmitBacktestResponse {
+  BacktestJob job = 1;
+}
+
+message SubmitBatchBacktestRequest {
+  repeated SubmitBacktestRequest backtests = 1;
+}
+
+message SubmitBatchBacktestResponse {
+  repeated BacktestJob jobs = 1;
+}
+
+message GetBacktestJobRequest {
+  string job_id = 1;
+}
+
+message GetBacktestJobResponse {
+  BacktestJob job = 1;
+  optional BacktestResult result = 2;
+}
+
+message GetBacktestResultRequest {
+  string job_id = 1;
+}
+
+message GetBacktestResultResponse {
+  BacktestResult result = 1;
+}
+
+message QueryBacktestResultsRequest {
+  optional string strategy_id = 1;
+  optional string optimization_run_id = 2;
+  optional double min_sharpe = 3;
+  optional double min_profit_pct = 4;
+  optional double max_drawdown_pct = 5;
+  optional int32 min_trades = 6;
+  TimeRange time_range = 7;
+  PaginationRequest pagination = 8;
+  string order_by = 9;    // "sharpe", "profit", "drawdown", "created_at"
+  bool ascending = 10;
+}
+
+message QueryBacktestResultsResponse {
+  repeated BacktestResultSummary results = 1;
+  PaginationResponse pagination = 2;
+}
+
+message BacktestResultSummary {
+  string id = 1;
+  string job_id = 2;
+  string strategy_id = 3;
+  string strategy_name = 4;
+  double profit_pct = 5;
+  double sharpe_ratio = 6;
+  double max_drawdown_pct = 7;
+  int32 total_trades = 8;
+  double win_rate = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+message CancelBacktestRequest {
+  string job_id = 1;
+}
+
+message CancelBacktestResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetQueueStatsRequest {}
+
+message GetQueueStatsResponse {
+  int32 pending_jobs = 1;
+  int32 running_jobs = 2;
+  int32 completed_today = 3;
+  int32 failed_today = 4;
+  int32 max_concurrent = 5;
+}

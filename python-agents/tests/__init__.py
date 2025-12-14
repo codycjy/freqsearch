@@ -1,0 +1,1 @@
+"""FreqSearch Agents Tests."""

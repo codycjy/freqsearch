@@ -1,0 +1,123 @@
+version: '3.8'
+
+# FreqSearch Local Development Environment
+# Usage: docker compose up -d
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: freqsearch-postgres
+    environment:
+      POSTGRES_USER: freqsearch
+      POSTGRES_PASSWORD: freqsearch_dev
+      POSTGRES_DB: freqsearch
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Auto-run migrations on first start
+      - ../go-backend/internal/db/migrations/001_init_schema.up.sql:/docker-entrypoint-initdb.d/001_init_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U freqsearch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - freqsearch-network
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: freqsearch-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: freqsearch
+      RABBITMQ_DEFAULT_PASS: freqsearch_dev
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - freqsearch-network
+
+  # Go Backend Service
+  go-backend:
+    build:
+      context: ../go-backend
+      dockerfile: ../docker/go-backend/Dockerfile
+    container_name: freqsearch-backend
+    environment:
+      - ENV=development
+      - GRPC_PORT=50051
+      - HTTP_PORT=8080
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=freqsearch
+      - DB_PASSWORD=freqsearch_dev
+      - DB_NAME=freqsearch
+      - DB_SSLMODE=disable
+      - RABBITMQ_URL=amqp://freqsearch:freqsearch_dev@rabbitmq:5672/
+      - MAX_CONCURRENT_BACKTESTS=8
+      - JOB_TIMEOUT_MINUTES=10
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    ports:
+      - "50051:50051"  # gRPC
+      - "8080:8080"    # HTTP (health, metrics)
+    volumes:
+      # Mount Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount data directories
+      - ../data/market:/data/market:ro
+      - ../data/strategies:/data/strategies
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - freqsearch-network
+    profiles:
+      - backend  # Only start with: docker compose --profile backend up
+
+  # Python Agents Service (Scout, Engineer, Analyst)
+  python-agents:
+    build:
+      context: ../python-agents
+      dockerfile: Dockerfile
+    container_name: freqsearch-agents
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=gpt-4-turbo-preview
+      - DATABASE_URL=postgresql+asyncpg://freqsearch:freqsearch_dev@postgres:5432/freqsearch
+      - RABBITMQ_URL=amqp://freqsearch:freqsearch_dev@rabbitmq:5672/
+      - GO_BACKEND_GRPC_ADDR=go-backend:50051
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+    volumes:
+      - ../data/strategies:/data/strategies
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - freqsearch-network
+    profiles:
+      - agents  # Only start with: docker compose --profile agents up
+
+volumes:
+  postgres_data:
+    name: freqsearch_postgres_data
+  rabbitmq_data:
+    name: freqsearch_rabbitmq_data
+
+networks:
+  freqsearch-network:
+    name: freqsearch_network
+    driver: bridge

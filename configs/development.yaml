@@ -1,0 +1,100 @@
+# FreqSearch Development Configuration
+# Copy to .env for local development or use as reference
+
+# =====================================================
+# Environment
+# =====================================================
+env: development
+
+# =====================================================
+# Go Backend Settings
+# =====================================================
+go_backend:
+  grpc_port: 50051
+  http_port: 8080
+
+  # PostgreSQL
+  database:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres
+    name: freqsearch_dev
+    sslmode: disable
+    max_connections: 25
+    max_idle_connections: 5
+
+  # RabbitMQ
+  rabbitmq:
+    url: amqp://guest:guest@localhost:5672/
+    exchange: freqsearch.events
+    prefetch_count: 10
+
+  # Scheduler
+  scheduler:
+    max_concurrent_backtests: 8
+    poll_interval_seconds: 1
+    job_timeout_minutes: 10
+
+  # Docker
+  docker:
+    image: freqtradeorg/freqtrade:stable
+    network: freqsearch_network
+    data_mount: /data/market
+    strategy_mount: /data/strategies
+
+# =====================================================
+# Python Agent Settings
+# =====================================================
+python_agent:
+  grpc_server: localhost:50051
+  grpc_timeout_seconds: 30
+
+  # RabbitMQ
+  rabbitmq:
+    url: amqp://freqsearch:freqsearch_dev@localhost:5672/
+    queue_prefix: python-agent
+
+  # LLM Configuration
+  llm:
+    provider: openai  # openai, anthropic, ollama
+    model: null       # Use provider default
+    temperature: 0.7
+    max_tokens: 4096
+
+  # Optimization Defaults
+  optimization:
+    max_iterations: 10
+    criteria:
+      min_sharpe: 1.0
+      min_profit_pct: 10.0
+      max_drawdown_pct: 20.0
+      min_trades: 50
+      min_win_rate: 0.5
+
+# =====================================================
+# Freqtrade Backtest Defaults
+# =====================================================
+freqtrade:
+  exchange: okx
+  pairs:
+    - BTC/USDT
+    - ETH/USDT
+    - SOL/USDT
+    - XRP/USDT
+    - DOGE/USDT
+    - BNB/USDT
+    - ADA/USDT
+    - AVAX/USDT
+  timeframe: 5m
+  timerange_days: 60
+  dry_run_wallet: 1000
+  max_open_trades: 5
+  stake_amount: unlimited
+
+# =====================================================
+# Logging
+# =====================================================
+logging:
+  level: DEBUG
+  format: console  # console or json

@@ -1,0 +1,273 @@
+"""FreqSearch Agents CLI and entry points."""
+
+import asyncio
+from typing import Optional
+
+import typer
+from rich.console import Console
+from rich.table import Table
+import structlog
+
+from .config import get_settings
+from .agents.scout import run_scout
+from .agents.engineer import run_engineer
+from .agents.analyst import run_analyst
+from .core.messaging import message_broker
+
+# Configure structlog
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.dev.ConsoleRenderer(),
+    ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+app = typer.Typer(
+    name="freqsearch-agents",
+    help="FreqSearch AI Agents for strategy discovery and optimization",
+)
+console = Console()
+
+
+@app.command()
+def scout(
+    source: str = typer.Option("stratninja", help="Strategy source to use"),
+    limit: int = typer.Option(20, help="Maximum strategies to fetch"),
+):
+    """Run the Scout Agent to discover new strategies."""
+    console.print(f"[bold blue]Starting Scout Agent[/bold blue]")
+    console.print(f"Source: {source}, Limit: {limit}")
+
+    async def _run():
+        async with message_broker():
+            result = await run_scout(source=source, limit=limit)
+            return result
+
+    result = asyncio.run(_run())
+
+    # Display results
+    table = Table(title="Scout Agent Results")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("Total Fetched", str(result["total_fetched"]))
+    table.add_row("Validation Failed", str(result["validation_failed"]))
+    table.add_row("Duplicates Removed", str(result["duplicates_removed"]))
+    table.add_row("Submitted", str(result["submitted_count"]))
+
+    if result["errors"]:
+        table.add_row("Errors", str(len(result["errors"])))
+
+    console.print(table)
+
+
+@app.command()
+def engineer(
+    strategy_file: str = typer.Argument(..., help="Path to strategy Python file"),
+    mode: str = typer.Option("new", help="Processing mode: new, fix, evolve"),
+    max_retries: int = typer.Option(3, help="Maximum retry attempts"),
+):
+    """Run the Engineer Agent to process a strategy."""
+    console.print(f"[bold blue]Starting Engineer Agent[/bold blue]")
+    console.print(f"File: {strategy_file}, Mode: {mode}")
+
+    # Read strategy file
+    try:
+        with open(strategy_file, "r") as f:
+            code = f.read()
+    except FileNotFoundError:
+        console.print(f"[red]File not found: {strategy_file}[/red]")
+        raise typer.Exit(1)
+
+    input_data = {
+        "name": strategy_file.split("/")[-1].replace(".py", ""),
+        "code": code,
+    }
+
+    async def _run():
+        async with message_broker():
+            result = await run_engineer(
+                input_data=input_data,
+                mode=mode,
+                max_retries=max_retries,
+            )
+            return result
+
+    result = asyncio.run(_run())
+
+    # Display results
+    if result["validation_passed"]:
+        console.print("[green]Strategy processed successfully![/green]")
+        console.print(f"Retry count: {result['retry_count']}")
+
+        if result["hyperopt_config"]:
+            console.print("\n[bold]Hyperopt Configuration:[/bold]")
+            params = result["hyperopt_config"].get("existing_parameters", [])
+            if params:
+                for p in params:
+                    console.print(f"  - {p['name']}: {p.get('low', '?')} - {p.get('high', '?')}")
+    else:
+        console.print("[red]Strategy processing failed[/red]")
+        for error in result["validation_errors"]:
+            console.print(f"  - {error}")
+
+
+@app.command()
+def analyze(
+    result_file: str = typer.Argument(..., help="Path to backtest result JSON"),
+    strategy_file: Optional[str] = typer.Option(None, help="Optional strategy file"),
+):
+    """Run the Analyst Agent to analyze backtest results."""
+    import json
+
+    console.print(f"[bold blue]Starting Analyst Agent[/bold blue]")
+
+    # Load result file
+    try:
+        with open(result_file, "r") as f:
+            backtest_result = json.load(f)
+    except FileNotFoundError:
+        console.print(f"[red]File not found: {result_file}[/red]")
+        raise typer.Exit(1)
+
+    # Optionally load strategy code
+    strategy_code = None
+    if strategy_file:
+        try:
+            with open(strategy_file, "r") as f:
+                strategy_code = f.read()
+        except FileNotFoundError:
+            console.print(f"[yellow]Strategy file not found, continuing without[/yellow]")
+
+    async def _run():
+        async with message_broker():
+            result = await run_analyst(
+                backtest_result=backtest_result,
+                strategy_code=strategy_code,
+            )
+            return result
+
+    result = asyncio.run(_run())
+
+    # Display results
+    table = Table(title="Analyst Agent Results")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("Decision", result["decision"])
+    table.add_row("Confidence", f"{result['confidence']:.1%}")
+
+    if result["issues"]:
+        table.add_row("Issues", "\n".join(result["issues"]))
+
+    if result["suggestion_type"]:
+        table.add_row("Suggestion Type", result["suggestion_type"])
+        table.add_row("Suggestion", result["suggestion_description"] or "N/A")
+
+    console.print(table)
+
+
+@app.command()
+def serve(
+    scout_enabled: bool = typer.Option(True, help="Enable Scout Agent"),
+    engineer_enabled: bool = typer.Option(True, help="Enable Engineer Agent"),
+    analyst_enabled: bool = typer.Option(True, help="Enable Analyst Agent"),
+):
+    """Start agents as message queue consumers."""
+    from .core.messaging import Events, get_broker
+
+    console.print("[bold blue]Starting Agent Service[/bold blue]")
+    console.print(f"Scout: {scout_enabled}, Engineer: {engineer_enabled}, Analyst: {analyst_enabled}")
+
+    async def _serve():
+        broker = get_broker()
+        await broker.connect()
+
+        tasks = []
+
+        if engineer_enabled:
+            # Subscribe to strategy.needs_processing
+            async def handle_strategy_needs_processing(data):
+                console.print(f"[cyan]Processing strategy: {data.get('name')}[/cyan]")
+                await run_engineer(input_data=data, mode="new")
+
+            tasks.append(
+                broker.subscribe(
+                    Events.STRATEGY_NEEDS_PROCESSING,
+                    "engineer-queue",
+                    handle_strategy_needs_processing,
+                )
+            )
+
+            # Subscribe to strategy.evolve
+            async def handle_strategy_evolve(data):
+                console.print(f"[cyan]Evolving strategy: {data.get('strategy_name')}[/cyan]")
+                await run_engineer(input_data=data, mode="evolve")
+
+            tasks.append(
+                broker.subscribe(
+                    Events.STRATEGY_EVOLVE,
+                    "engineer-evolve-queue",
+                    handle_strategy_evolve,
+                )
+            )
+
+        if analyst_enabled:
+            # Subscribe to backtest.completed
+            async def handle_backtest_completed(data):
+                console.print(f"[cyan]Analyzing backtest: {data.get('job_id')}[/cyan]")
+                await run_analyst(backtest_result=data)
+
+            tasks.append(
+                broker.subscribe(
+                    Events.BACKTEST_COMPLETED,
+                    "analyst-queue",
+                    handle_backtest_completed,
+                )
+            )
+
+        console.print("[green]Agent service started. Press Ctrl+C to stop.[/green]")
+
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await broker.disconnect()
+
+    try:
+        asyncio.run(_serve())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Shutting down...[/yellow]")
+
+
+@app.command()
+def config():
+    """Show current configuration."""
+    settings = get_settings()
+
+    table = Table(title="FreqSearch Agents Configuration")
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("OpenAI Model", settings.openai.model)
+    table.add_row("Database URL", settings.database.url[:50] + "...")
+    table.add_row("RabbitMQ URL", settings.rabbitmq.url)
+    table.add_row("Go Backend gRPC", settings.grpc.go_backend_addr)
+    table.add_row("Scout Schedule", settings.scout.cron_schedule)
+    table.add_row("Scout Max Strategies", str(settings.scout.max_strategies_per_run))
+    table.add_row("Engineer Max Retries", str(settings.engineer.max_retries))
+    table.add_row("Analyst Confidence Threshold", str(settings.analyst.confidence_threshold))
+
+    console.print(table)
+
+
+if __name__ == "__main__":
+    app()
