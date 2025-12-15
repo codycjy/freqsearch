@@ -122,3 +122,40 @@ class AnalystState(TypedDict):
 
     # Termination reason (set when iteration limit reached or criteria met)
     termination_reason: str | None
+
+
+class OrchestratorState(TypedDict):
+    """State for Orchestrator Agent.
+
+    Coordinates the full optimization loop: Engineer → Backtest → Analyst → Decision.
+    """
+
+    # Conversation messages
+    messages: Annotated[list, add_messages]
+
+    # Optimization run tracking
+    optimization_run_id: str
+    base_strategy_id: str
+    current_strategy_id: str
+
+    # Iteration tracking
+    current_iteration: int
+    max_iterations: int
+
+    # Results tracking
+    best_strategy_id: str | None
+    best_result: dict[str, Any] | None
+    best_sharpe: float
+
+    # Current iteration state
+    current_backtest_job_id: str | None
+    current_result: dict[str, Any] | None
+    analyst_decision: str | None  # "approve", "modify", "archive"
+    analyst_feedback: dict[str, Any] | None
+
+    # Termination
+    terminated: bool
+    termination_reason: str | None
+
+    # Error tracking
+    errors: list[str]

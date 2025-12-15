@@ -7,9 +7,13 @@ import (
 	"net"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
+	grpccodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/saltfish/freqsearch/go-backend/internal/db/repository"
@@ -25,6 +29,7 @@ type Server struct {
 	repos     *repository.Repositories
 	scheduler *scheduler.Scheduler
 	logger    *zap.Logger
+	tracer    trace.Tracer
 
 	grpcServer *grpc.Server
 }
@@ -39,6 +44,7 @@ func NewServer(
 		repos:     repos,
 		scheduler: sched,
 		logger:    logger,
+		tracer:    otel.Tracer("freqsearch.grpc"),
 	}
 }
 
@@ -75,17 +81,17 @@ func (s *Server) CreateStrategy(ctx context.Context, req *pb.CreateStrategyReque
 	if req.ParentId != nil && *req.ParentId != "" {
 		parentID, err := uuid.Parse(*req.ParentId)
 		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid parent_id: %v", err)
+			return nil, status.Errorf(grpccodes.InvalidArgument, "invalid parent_id: %v", err)
 		}
 		strategy.ParentID = &parentID
 	}
 
 	if err := s.repos.Strategy.Create(ctx, strategy); err != nil {
 		if errors.Is(err, domain.ErrDuplicate) {
-			return nil, status.Errorf(codes.AlreadyExists, "strategy with same code already exists")
+			return nil, status.Errorf(grpccodes.AlreadyExists, "strategy with same code already exists")
 		}
 		s.logger.Error("Failed to create strategy", zap.Error(err))
-		return nil, status.Errorf(codes.Internal, "failed to create strategy")
+		return nil, status.Errorf(grpccodes.Internal, "failed to create strategy")
 	}
 
 	return &pb.CreateStrategyResponse{
@@ -97,15 +103,15 @@ func (s *Server) CreateStrategy(ctx context.Context, req *pb.CreateStrategyReque
 func (s *Server) GetStrategy(ctx context.Context, req *pb.GetStrategyRequest) (*pb.GetStrategyResponse, error) {
 	id, err := uuid.Parse(req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid id: %v", err)
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid id: %v", err)
 	}
 
 	strategy, err := s.repos.Strategy.GetByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "strategy not found")
+			return nil, status.Errorf(grpccodes.NotFound, "strategy not found")
 		}
-		return nil, status.Errorf(codes.Internal, "failed to get strategy")
+		return nil, status.Errorf(grpccodes.Internal, "failed to get strategy")
 	}
 
 	return &pb.GetStrategyResponse{
@@ -117,17 +123,17 @@ func (s *Server) GetStrategy(ctx context.Context, req *pb.GetStrategyRequest) (*
 func (s *Server) DeleteStrategy(ctx context.Context, req *pb.DeleteStrategyRequest) (*pb.DeleteStrategyResponse, error) {
 	id, err := uuid.Parse(req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid id: %v", err)
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid id: %v", err)
 	}
 
 	if err := s.repos.Strategy.Delete(ctx, id); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "strategy not found")
+			return nil, status.Errorf(grpccodes.NotFound, "strategy not found")
 		}
 		if errors.Is(err, domain.ErrStrategyInUse) {
-			return nil, status.Errorf(codes.FailedPrecondition, "strategy is in use")
+			return nil, status.Errorf(grpccodes.FailedPrecondition, "strategy is in use")
 		}
-		return nil, status.Errorf(codes.Internal, "failed to delete strategy")
+		return nil, status.Errorf(grpccodes.Internal, "failed to delete strategy")
 	}
 
 	return &pb.DeleteStrategyResponse{}, nil
@@ -137,7 +143,7 @@ func (s *Server) DeleteStrategy(ctx context.Context, req *pb.DeleteStrategyReque
 func (s *Server) SubmitBacktest(ctx context.Context, req *pb.SubmitBacktestRequest) (*pb.SubmitBacktestResponse, error) {
 	strategyID, err := uuid.Parse(req.StrategyId)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid strategy_id: %v", err)
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid strategy_id: %v", err)
 	}
 
 	config := protoConfigToDomain(req.Config)
@@ -145,7 +151,7 @@ func (s *Server) SubmitBacktest(ctx context.Context, req *pb.SubmitBacktestReque
 
 	if err := s.repos.BacktestJob.Create(ctx, job); err != nil {
 		s.logger.Error("Failed to create backtest job", zap.Error(err))
-		return nil, status.Errorf(codes.Internal, "failed to create job")
+		return nil, status.Errorf(grpccodes.Internal, "failed to create job")
 	}
 
 	return &pb.SubmitBacktestResponse{
@@ -157,15 +163,15 @@ func (s *Server) SubmitBacktest(ctx context.Context, req *pb.SubmitBacktestReque
 func (s *Server) GetBacktestJob(ctx context.Context, req *pb.GetBacktestJobRequest) (*pb.GetBacktestJobResponse, error) {
 	id, err := uuid.Parse(req.JobId)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid job_id: %v", err)
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid job_id: %v", err)
 	}
 
 	job, err := s.repos.BacktestJob.GetByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "job not found")
+			return nil, status.Errorf(grpccodes.NotFound, "job not found")
 		}
-		return nil, status.Errorf(codes.Internal, "failed to get job")
+		return nil, status.Errorf(grpccodes.Internal, "failed to get job")
 	}
 
 	return &pb.GetBacktestJobResponse{
@@ -177,15 +183,15 @@ func (s *Server) GetBacktestJob(ctx context.Context, req *pb.GetBacktestJobReque
 func (s *Server) GetBacktestResult(ctx context.Context, req *pb.GetBacktestResultRequest) (*pb.GetBacktestResultResponse, error) {
 	jobID, err := uuid.Parse(req.JobId)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid job_id: %v", err)
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid job_id: %v", err)
 	}
 
 	result, err := s.repos.Result.GetByJobID(ctx, jobID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "result not found")
+			return nil, status.Errorf(grpccodes.NotFound, "result not found")
 		}
-		return nil, status.Errorf(codes.Internal, "failed to get result")
+		return nil, status.Errorf(grpccodes.Internal, "failed to get result")
 	}
 
 	return &pb.GetBacktestResultResponse{
@@ -197,17 +203,17 @@ func (s *Server) GetBacktestResult(ctx context.Context, req *pb.GetBacktestResul
 func (s *Server) CancelBacktest(ctx context.Context, req *pb.CancelBacktestRequest) (*pb.CancelBacktestResponse, error) {
 	id, err := uuid.Parse(req.JobId)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid job_id: %v", err)
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid job_id: %v", err)
 	}
 
 	if err := s.repos.BacktestJob.Cancel(ctx, id); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, status.Errorf(codes.NotFound, "job not found")
+			return nil, status.Errorf(grpccodes.NotFound, "job not found")
 		}
 		if errors.Is(err, domain.ErrJobNotCancellable) {
-			return nil, status.Errorf(codes.FailedPrecondition, "job cannot be cancelled")
+			return nil, status.Errorf(grpccodes.FailedPrecondition, "job cannot be cancelled")
 		}
-		return nil, status.Errorf(codes.Internal, "failed to cancel job")
+		return nil, status.Errorf(grpccodes.Internal, "failed to cancel job")
 	}
 
 	return &pb.CancelBacktestResponse{}, nil
@@ -217,7 +223,7 @@ func (s *Server) CancelBacktest(ctx context.Context, req *pb.CancelBacktestReque
 func (s *Server) GetQueueStats(ctx context.Context, req *pb.GetQueueStatsRequest) (*pb.GetQueueStatsResponse, error) {
 	stats, err := s.repos.BacktestJob.GetQueueStats(ctx)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get queue stats")
+		return nil, status.Errorf(grpccodes.Internal, "failed to get queue stats")
 	}
 
 	return &pb.GetQueueStatsResponse{
@@ -225,6 +231,347 @@ func (s *Server) GetQueueStats(ctx context.Context, req *pb.GetQueueStatsRequest
 		RunningJobs:    int32(stats.RunningJobs),
 		CompletedToday: int32(stats.CompletedToday),
 		FailedToday:    int32(stats.FailedToday),
+	}, nil
+}
+
+// SearchStrategies searches for strategies with filters.
+func (s *Server) SearchStrategies(ctx context.Context, req *pb.SearchStrategiesRequest) (*pb.SearchStrategiesResponse, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.SearchStrategies")
+	defer span.End()
+
+	query := protoSearchQueryToDomain(req)
+	strategies, totalCount, err := s.repos.Strategy.Search(ctx, query)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to search strategies")
+		s.logger.Error("Failed to search strategies", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to search strategies")
+	}
+
+	span.SetAttributes(attribute.Int("total_count", totalCount))
+
+	protoStrategies := make([]*pb.StrategyWithMetrics, len(strategies))
+	for i, swm := range strategies {
+		protoStrategies[i] = domainStrategyWithMetricsToProto(swm)
+	}
+
+	pagination := &pb.PaginationResponse{
+		TotalCount: int32(totalCount),
+		Page:       int32(query.Page),
+		PageSize:   int32(query.PageSize),
+		TotalPages: int32((totalCount + query.PageSize - 1) / query.PageSize),
+	}
+
+	return &pb.SearchStrategiesResponse{
+		Strategies: protoStrategies,
+		Pagination: pagination,
+	}, nil
+}
+
+// GetStrategyLineage gets the strategy lineage tree.
+func (s *Server) GetStrategyLineage(ctx context.Context, req *pb.GetStrategyLineageRequest) (*pb.GetStrategyLineageResponse, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.GetStrategyLineage")
+	defer span.End()
+
+	strategyID, err := uuid.Parse(req.StrategyId)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid strategy_id")
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid strategy_id: %v", err)
+	}
+
+	span.SetAttributes(
+		attribute.String("strategy_id", strategyID.String()),
+		attribute.Int("depth", int(req.Depth)),
+	)
+
+	lineageNode, err := s.repos.Strategy.GetLineage(ctx, strategyID, int(req.Depth))
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			span.SetStatus(codes.Error, "strategy not found")
+			return nil, status.Errorf(grpccodes.NotFound, "strategy not found")
+		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to get lineage")
+		s.logger.Error("Failed to get strategy lineage", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to get lineage")
+	}
+
+	protoLineage := domainLineageNodeToProto(lineageNode)
+
+	return &pb.GetStrategyLineageResponse{
+		Lineage: []*pb.StrategyLineageNode{protoLineage},
+	}, nil
+}
+
+// SubmitBatchBacktest submits multiple backtest jobs.
+func (s *Server) SubmitBatchBacktest(ctx context.Context, req *pb.SubmitBatchBacktestRequest) (*pb.SubmitBatchBacktestResponse, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.SubmitBatchBacktest")
+	defer span.End()
+
+	span.SetAttributes(attribute.Int("batch_size", len(req.Backtests)))
+
+	jobs := make([]*domain.BacktestJob, 0, len(req.Backtests))
+	for _, btReq := range req.Backtests {
+		strategyID, err := uuid.Parse(btReq.StrategyId)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "invalid strategy_id in batch")
+			return nil, status.Errorf(grpccodes.InvalidArgument, "invalid strategy_id: %v", err)
+		}
+
+		var optRunID *uuid.UUID
+		if btReq.OptimizationRunId != nil && *btReq.OptimizationRunId != "" {
+			parsed, err := uuid.Parse(*btReq.OptimizationRunId)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "invalid optimization_run_id in batch")
+				return nil, status.Errorf(grpccodes.InvalidArgument, "invalid optimization_run_id: %v", err)
+			}
+			optRunID = &parsed
+		}
+
+		config := protoConfigToDomain(btReq.Config)
+		job := domain.NewBacktestJob(strategyID, config, int(btReq.Priority), optRunID)
+		jobs = append(jobs, job)
+	}
+
+	if err := s.repos.BacktestJob.CreateBatch(ctx, jobs); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to create batch")
+		s.logger.Error("Failed to create batch backtest jobs", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to create batch jobs")
+	}
+
+	protoJobs := make([]*pb.BacktestJob, len(jobs))
+	for i, job := range jobs {
+		protoJobs[i] = domainJobToProto(job)
+	}
+
+	return &pb.SubmitBatchBacktestResponse{
+		Jobs: protoJobs,
+	}, nil
+}
+
+// QueryBacktestResults queries backtest results with filters.
+func (s *Server) QueryBacktestResults(ctx context.Context, req *pb.QueryBacktestResultsRequest) (*pb.QueryBacktestResultsResponse, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.QueryBacktestResults")
+	defer span.End()
+
+	query := protoBacktestQueryToDomain(req)
+	results, totalCount, err := s.repos.Result.Query(ctx, query)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to query results")
+		s.logger.Error("Failed to query backtest results", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to query results")
+	}
+
+	span.SetAttributes(attribute.Int("total_count", totalCount))
+
+	protoResults := make([]*pb.BacktestResultSummary, len(results))
+	for i, result := range results {
+		protoResults[i] = domainResultSummaryToProto(result)
+	}
+
+	pagination := &pb.PaginationResponse{
+		TotalCount: int32(totalCount),
+		Page:       int32(query.Page),
+		PageSize:   int32(query.PageSize),
+		TotalPages: int32((totalCount + query.PageSize - 1) / query.PageSize),
+	}
+
+	return &pb.QueryBacktestResultsResponse{
+		Results:    protoResults,
+		Pagination: pagination,
+	}, nil
+}
+
+// StartOptimization starts a new optimization run.
+func (s *Server) StartOptimization(ctx context.Context, req *pb.StartOptimizationRequest) (*pb.StartOptimizationResponse, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.StartOptimization")
+	defer span.End()
+
+	baseStrategyID, err := uuid.Parse(req.BaseStrategyId)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid base_strategy_id")
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid base_strategy_id: %v", err)
+	}
+
+	span.SetAttributes(
+		attribute.String("name", req.Name),
+		attribute.String("base_strategy_id", baseStrategyID.String()),
+	)
+
+	config := protoOptConfigToDomain(req.Config)
+	run := domain.NewOptimizationRun(req.Name, baseStrategyID, config)
+
+	if err := s.repos.Optimization.Create(ctx, run); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to create optimization run")
+		s.logger.Error("Failed to create optimization run", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to create optimization run")
+	}
+
+	return &pb.StartOptimizationResponse{
+		Run: domainOptRunToProto(run),
+	}, nil
+}
+
+// GetOptimizationRun gets an optimization run with its iterations.
+func (s *Server) GetOptimizationRun(ctx context.Context, req *pb.GetOptimizationRunRequest) (*pb.GetOptimizationRunResponse, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.GetOptimizationRun")
+	defer span.End()
+
+	runID, err := uuid.Parse(req.RunId)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid run_id")
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid run_id: %v", err)
+	}
+
+	span.SetAttributes(attribute.String("run_id", runID.String()))
+
+	run, err := s.repos.Optimization.GetByID(ctx, runID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			span.SetStatus(codes.Error, "optimization run not found")
+			return nil, status.Errorf(grpccodes.NotFound, "optimization run not found")
+		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to get optimization run")
+		s.logger.Error("Failed to get optimization run", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to get optimization run")
+	}
+
+	iterations, err := s.repos.Optimization.GetIterations(ctx, runID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to get iterations")
+		s.logger.Error("Failed to get optimization iterations", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to get iterations")
+	}
+
+	protoIterations := make([]*pb.OptimizationIteration, len(iterations))
+	for i, iter := range iterations {
+		protoIterations[i] = domainIterationToProto(iter)
+	}
+
+	return &pb.GetOptimizationRunResponse{
+		Run:        domainOptRunToProto(run),
+		Iterations: protoIterations,
+	}, nil
+}
+
+// ControlOptimization controls an optimization run (pause/resume/cancel).
+func (s *Server) ControlOptimization(ctx context.Context, req *pb.ControlOptimizationRequest) (*pb.ControlOptimizationResponse, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.ControlOptimization")
+	defer span.End()
+
+	runID, err := uuid.Parse(req.RunId)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid run_id")
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid run_id: %v", err)
+	}
+
+	span.SetAttributes(
+		attribute.String("run_id", runID.String()),
+		attribute.String("action", req.Action.String()),
+	)
+
+	var newStatus domain.OptimizationStatus
+	switch req.Action {
+	case pb.OptimizationAction_OPTIMIZATION_ACTION_PAUSE:
+		newStatus = domain.OptimizationStatusPaused
+	case pb.OptimizationAction_OPTIMIZATION_ACTION_RESUME:
+		newStatus = domain.OptimizationStatusRunning
+	case pb.OptimizationAction_OPTIMIZATION_ACTION_CANCEL:
+		newStatus = domain.OptimizationStatusCancelled
+	default:
+		span.SetStatus(codes.Error, "invalid action")
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid action")
+	}
+
+	if err := s.repos.Optimization.UpdateStatus(ctx, runID, newStatus); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			span.SetStatus(codes.Error, "optimization run not found")
+			return nil, status.Errorf(grpccodes.NotFound, "optimization run not found")
+		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to update status")
+		s.logger.Error("Failed to control optimization run", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to control optimization")
+	}
+
+	run, err := s.repos.Optimization.GetByID(ctx, runID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to get updated run")
+		s.logger.Error("Failed to get optimization run after control", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to get optimization run")
+	}
+
+	return &pb.ControlOptimizationResponse{
+		Success: true,
+		Run:     domainOptRunToProto(run),
+	}, nil
+}
+
+// ListOptimizationRuns lists optimization runs with filters.
+func (s *Server) ListOptimizationRuns(ctx context.Context, req *pb.ListOptimizationRunsRequest) (*pb.ListOptimizationRunsResponse, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.ListOptimizationRuns")
+	defer span.End()
+
+	query := domain.OptimizationListQuery{
+		Page:     1,
+		PageSize: 20,
+	}
+
+	if req.Pagination != nil {
+		query.Page = int(req.Pagination.Page)
+		query.PageSize = int(req.Pagination.PageSize)
+	}
+	query.SetDefaults()
+
+	if req.Status != nil {
+		status := protoOptStatusToDomain(*req.Status)
+		query.Status = &status
+	}
+
+	if req.TimeRange != nil {
+		query.TimeRange = &domain.TimeRange{
+			Start: req.TimeRange.Start.AsTime(),
+			End:   req.TimeRange.End.AsTime(),
+		}
+	}
+
+	runs, totalCount, err := s.repos.Optimization.List(ctx, query)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to list optimization runs")
+		s.logger.Error("Failed to list optimization runs", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to list optimization runs")
+	}
+
+	span.SetAttributes(attribute.Int("total_count", totalCount))
+
+	protoRuns := make([]*pb.OptimizationRun, len(runs))
+	for i, run := range runs {
+		protoRuns[i] = domainOptRunToProto(run)
+	}
+
+	pagination := &pb.PaginationResponse{
+		TotalCount: int32(totalCount),
+		Page:       int32(query.Page),
+		PageSize:   int32(query.PageSize),
+		TotalPages: int32((totalCount + query.PageSize - 1) / query.PageSize),
+	}
+
+	return &pb.ListOptimizationRunsResponse{
+		Runs:       protoRuns,
+		Pagination: pagination,
 	}, nil
 }
 

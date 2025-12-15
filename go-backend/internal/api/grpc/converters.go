@@ -273,3 +273,346 @@ func parseUUID(s string) uuid.UUID {
 	}
 	return id
 }
+
+// protoSearchQueryToDomain converts a pb.SearchStrategiesRequest to a domain.StrategySearchQuery.
+func protoSearchQueryToDomain(req *pb.SearchStrategiesRequest) domain.StrategySearchQuery {
+	query := domain.StrategySearchQuery{
+		OrderBy:   req.OrderBy,
+		Ascending: req.Ascending,
+	}
+
+	if req.NamePattern != nil {
+		query.NamePattern = req.NamePattern
+	}
+	if req.MinSharpe != nil {
+		query.MinSharpe = req.MinSharpe
+	}
+	if req.MinProfitPct != nil {
+		query.MinProfitPct = req.MinProfitPct
+	}
+	if req.MaxDrawdownPct != nil {
+		query.MaxDrawdownPct = req.MaxDrawdownPct
+	}
+	if req.MinTrades != nil {
+		minTrades := int(*req.MinTrades)
+		query.MinTrades = &minTrades
+	}
+
+	if req.Pagination != nil {
+		query.Page = int(req.Pagination.Page)
+		query.PageSize = int(req.Pagination.PageSize)
+	}
+
+	query.SetDefaults()
+	return query
+}
+
+// domainStrategyWithMetricsToProto converts a domain.StrategyWithMetrics to a pb.StrategyWithMetrics.
+func domainStrategyWithMetricsToProto(swm domain.StrategyWithMetrics) *pb.StrategyWithMetrics {
+	proto := &pb.StrategyWithMetrics{
+		Strategy: domainStrategyToProto(swm.Strategy),
+	}
+
+	if swm.BestResult != nil {
+		proto.BestResult = &pb.StrategyPerformanceMetrics{
+			ProfitPct:      swm.BestResult.ProfitPct,
+			MaxDrawdownPct: swm.BestResult.MaxDrawdownPct,
+			TotalTrades:    int32(swm.BestResult.TotalTrades),
+			WinRate:        swm.BestResult.WinRate,
+		}
+
+		if swm.BestResult.SharpeRatio != nil {
+			proto.BestResult.SharpeRatio = *swm.BestResult.SharpeRatio
+		}
+		if swm.BestResult.SortinoRatio != nil {
+			proto.BestResult.SortinoRatio = *swm.BestResult.SortinoRatio
+		}
+		if swm.BestResult.SharpeRatio != nil {
+			proto.BestResult.ProfitFactor = *swm.BestResult.SharpeRatio
+		}
+	}
+
+	proto.BacktestCount = int32(swm.BestResult.BacktestCount)
+
+	return proto
+}
+
+// domainLineageNodeToProto converts a domain.StrategyLineageNode to a pb.StrategyLineageNode.
+func domainLineageNodeToProto(node *domain.StrategyLineageNode) *pb.StrategyLineageNode {
+	if node == nil {
+		return nil
+	}
+
+	proto := &pb.StrategyLineageNode{
+		Strategy: &pb.Strategy{
+			Id:         node.ID.String(),
+			Name:       node.Name,
+			Generation: int32(node.Generation),
+		},
+	}
+
+	if node.ParentID != nil {
+		parentID := node.ParentID.String()
+		proto.Strategy.ParentId = &parentID
+	}
+
+	if len(node.Children) > 0 {
+		proto.Children = make([]*pb.StrategyLineageNode, len(node.Children))
+		for i, child := range node.Children {
+			proto.Children[i] = domainLineageNodeToProto(child)
+		}
+	}
+
+	return proto
+}
+
+// protoBacktestQueryToDomain converts a pb.QueryBacktestResultsRequest to a domain.BacktestResultQuery.
+func protoBacktestQueryToDomain(req *pb.QueryBacktestResultsRequest) domain.BacktestResultQuery {
+	query := domain.BacktestResultQuery{
+		OrderBy:   req.OrderBy,
+		Ascending: req.Ascending,
+	}
+
+	if req.StrategyId != nil && *req.StrategyId != "" {
+		strategyID := parseUUID(*req.StrategyId)
+		query.StrategyID = &strategyID
+	}
+
+	if req.OptimizationRunId != nil && *req.OptimizationRunId != "" {
+		optRunID := parseUUID(*req.OptimizationRunId)
+		query.OptimizationRunID = &optRunID
+	}
+
+	if req.MinSharpe != nil {
+		query.MinSharpe = req.MinSharpe
+	}
+	if req.MinProfitPct != nil {
+		query.MinProfitPct = req.MinProfitPct
+	}
+	if req.MaxDrawdownPct != nil {
+		query.MaxDrawdownPct = req.MaxDrawdownPct
+	}
+	if req.MinTrades != nil {
+		minTrades := int(*req.MinTrades)
+		query.MinTrades = &minTrades
+	}
+
+	if req.TimeRange != nil {
+		query.TimeRange = &domain.TimeRange{
+			Start: req.TimeRange.Start.AsTime(),
+			End:   req.TimeRange.End.AsTime(),
+		}
+	}
+
+	if req.Pagination != nil {
+		query.Page = int(req.Pagination.Page)
+		query.PageSize = int(req.Pagination.PageSize)
+	}
+
+	query.SetDefaults()
+	return query
+}
+
+// domainResultSummaryToProto converts a domain.BacktestResult to a pb.BacktestResultSummary.
+func domainResultSummaryToProto(r *domain.BacktestResult) *pb.BacktestResultSummary {
+	if r == nil {
+		return nil
+	}
+
+	summary := &pb.BacktestResultSummary{
+		Id:             r.ID.String(),
+		JobId:          r.JobID.String(),
+		StrategyId:     r.StrategyID.String(),
+		StrategyName:   "",
+		ProfitPct:      r.ProfitPct,
+		MaxDrawdownPct: r.MaxDrawdownPct,
+		TotalTrades:    int32(r.TotalTrades),
+		WinRate:        r.WinRate,
+		CreatedAt:      timestamppb.New(r.CreatedAt),
+	}
+
+	if r.SharpeRatio != nil {
+		summary.SharpeRatio = *r.SharpeRatio
+	}
+
+	return summary
+}
+
+// protoOptConfigToDomain converts a pb.OptimizationConfig to a domain.OptimizationConfig.
+func protoOptConfigToDomain(cfg *pb.OptimizationConfig) domain.OptimizationConfig {
+	if cfg == nil {
+		return domain.OptimizationConfig{}
+	}
+
+	config := domain.OptimizationConfig{
+		BacktestConfig: protoConfigToDomain(cfg.BacktestConfig),
+		MaxIterations:  int(cfg.MaxIterations),
+		Mode:           protoOptModeToDomain(cfg.Mode),
+	}
+
+	if cfg.Criteria != nil {
+		config.Criteria = domain.OptimizationCriteria{
+			MinSharpe:      cfg.Criteria.MinSharpe,
+			MinProfitPct:   cfg.Criteria.MinProfitPct,
+			MaxDrawdownPct: cfg.Criteria.MaxDrawdownPct,
+			MinTrades:      int(cfg.Criteria.MinTrades),
+			MinWinRate:     cfg.Criteria.MinWinRate,
+		}
+	}
+
+	return config
+}
+
+// domainOptRunToProto converts a domain.OptimizationRun to a pb.OptimizationRun.
+func domainOptRunToProto(run *domain.OptimizationRun) *pb.OptimizationRun {
+	if run == nil {
+		return nil
+	}
+
+	proto := &pb.OptimizationRun{
+		Id:               run.ID.String(),
+		Name:             run.Name,
+		BaseStrategyId:   run.BaseStrategyID.String(),
+		Config:           domainOptConfigToProto(run.Config),
+		Status:           domainOptStatusToProto(run.Status),
+		CurrentIteration: int32(run.CurrentIteration),
+		MaxIterations:    int32(run.MaxIterations),
+		TerminationReason: run.TerminationReason,
+		CreatedAt:        timestamppb.New(run.CreatedAt),
+		UpdatedAt:        timestamppb.New(run.UpdatedAt),
+	}
+
+	if run.BestStrategyID != nil {
+		bestStrategyID := run.BestStrategyID.String()
+		proto.BestStrategyId = &bestStrategyID
+	}
+
+	if run.CompletedAt != nil {
+		proto.CompletedAt = timestamppb.New(*run.CompletedAt)
+	}
+
+	return proto
+}
+
+// domainOptConfigToProto converts a domain.OptimizationConfig to a pb.OptimizationConfig.
+func domainOptConfigToProto(cfg domain.OptimizationConfig) *pb.OptimizationConfig {
+	return &pb.OptimizationConfig{
+		BacktestConfig: domainConfigToProto(cfg.BacktestConfig),
+		MaxIterations:  int32(cfg.MaxIterations),
+		Criteria: &pb.OptimizationCriteria{
+			MinSharpe:      cfg.Criteria.MinSharpe,
+			MinProfitPct:   cfg.Criteria.MinProfitPct,
+			MaxDrawdownPct: cfg.Criteria.MaxDrawdownPct,
+			MinTrades:      int32(cfg.Criteria.MinTrades),
+			MinWinRate:     cfg.Criteria.MinWinRate,
+		},
+		Mode: domainOptModeToProto(cfg.Mode),
+	}
+}
+
+// domainIterationToProto converts a domain.OptimizationIteration to a pb.OptimizationIteration.
+func domainIterationToProto(iter *domain.OptimizationIteration) *pb.OptimizationIteration {
+	if iter == nil {
+		return nil
+	}
+
+	proto := &pb.OptimizationIteration{
+		IterationNumber: int32(iter.IterationNumber),
+		StrategyId:      iter.StrategyID.String(),
+		BacktestJobId:   iter.BacktestJobID.String(),
+		EngineerChanges: iter.EngineerChanges,
+		AnalystFeedback: iter.AnalystFeedback,
+		Approval:        domainApprovalStatusToProto(iter.Approval),
+		Timestamp:       timestamppb.New(iter.CreatedAt),
+	}
+
+	return proto
+}
+
+// domainOptStatusToProto converts a domain.OptimizationStatus to a pb.OptimizationStatus.
+func domainOptStatusToProto(status domain.OptimizationStatus) pb.OptimizationStatus {
+	switch status {
+	case domain.OptimizationStatusPending:
+		return pb.OptimizationStatus_OPTIMIZATION_STATUS_PENDING
+	case domain.OptimizationStatusRunning:
+		return pb.OptimizationStatus_OPTIMIZATION_STATUS_RUNNING
+	case domain.OptimizationStatusPaused:
+		return pb.OptimizationStatus_OPTIMIZATION_STATUS_PAUSED
+	case domain.OptimizationStatusCompleted:
+		return pb.OptimizationStatus_OPTIMIZATION_STATUS_COMPLETED
+	case domain.OptimizationStatusFailed:
+		return pb.OptimizationStatus_OPTIMIZATION_STATUS_FAILED
+	case domain.OptimizationStatusCancelled:
+		return pb.OptimizationStatus_OPTIMIZATION_STATUS_CANCELLED
+	default:
+		return pb.OptimizationStatus_OPTIMIZATION_STATUS_UNSPECIFIED
+	}
+}
+
+// protoOptStatusToDomain converts a pb.OptimizationStatus to a domain.OptimizationStatus.
+func protoOptStatusToDomain(status pb.OptimizationStatus) domain.OptimizationStatus {
+	switch status {
+	case pb.OptimizationStatus_OPTIMIZATION_STATUS_PENDING:
+		return domain.OptimizationStatusPending
+	case pb.OptimizationStatus_OPTIMIZATION_STATUS_RUNNING:
+		return domain.OptimizationStatusRunning
+	case pb.OptimizationStatus_OPTIMIZATION_STATUS_PAUSED:
+		return domain.OptimizationStatusPaused
+	case pb.OptimizationStatus_OPTIMIZATION_STATUS_COMPLETED:
+		return domain.OptimizationStatusCompleted
+	case pb.OptimizationStatus_OPTIMIZATION_STATUS_FAILED:
+		return domain.OptimizationStatusFailed
+	case pb.OptimizationStatus_OPTIMIZATION_STATUS_CANCELLED:
+		return domain.OptimizationStatusCancelled
+	default:
+		return domain.OptimizationStatusPending
+	}
+}
+
+// domainOptModeToProto converts a domain.OptimizationMode to a pb.OptimizationMode.
+func domainOptModeToProto(mode domain.OptimizationMode) pb.OptimizationMode {
+	switch mode {
+	case domain.OptimizationModeMaximizeSharpe:
+		return pb.OptimizationMode_OPTIMIZATION_MODE_MAXIMIZE_SHARPE
+	case domain.OptimizationModeMaximizeProfit:
+		return pb.OptimizationMode_OPTIMIZATION_MODE_MAXIMIZE_PROFIT
+	case domain.OptimizationModeMinimizeDrawdown:
+		return pb.OptimizationMode_OPTIMIZATION_MODE_MINIMIZE_DRAWDOWN
+	case domain.OptimizationModeBalanced:
+		return pb.OptimizationMode_OPTIMIZATION_MODE_BALANCED
+	default:
+		return pb.OptimizationMode_OPTIMIZATION_MODE_UNSPECIFIED
+	}
+}
+
+// protoOptModeToDomain converts a pb.OptimizationMode to a domain.OptimizationMode.
+func protoOptModeToDomain(mode pb.OptimizationMode) domain.OptimizationMode {
+	switch mode {
+	case pb.OptimizationMode_OPTIMIZATION_MODE_MAXIMIZE_SHARPE:
+		return domain.OptimizationModeMaximizeSharpe
+	case pb.OptimizationMode_OPTIMIZATION_MODE_MAXIMIZE_PROFIT:
+		return domain.OptimizationModeMaximizeProfit
+	case pb.OptimizationMode_OPTIMIZATION_MODE_MINIMIZE_DRAWDOWN:
+		return domain.OptimizationModeMinimizeDrawdown
+	case pb.OptimizationMode_OPTIMIZATION_MODE_BALANCED:
+		return domain.OptimizationModeBalanced
+	default:
+		return domain.OptimizationModeBalanced
+	}
+}
+
+// domainApprovalStatusToProto converts a domain.ApprovalStatus to a pb.ApprovalStatus.
+func domainApprovalStatusToProto(status domain.ApprovalStatus) pb.ApprovalStatus {
+	switch status {
+	case domain.ApprovalStatusPending:
+		return pb.ApprovalStatus_APPROVAL_STATUS_PENDING
+	case domain.ApprovalStatusApproved:
+		return pb.ApprovalStatus_APPROVAL_STATUS_APPROVED
+	case domain.ApprovalStatusRejected:
+		return pb.ApprovalStatus_APPROVAL_STATUS_REJECTED
+	case domain.ApprovalStatusNeedsIteration:
+		return pb.ApprovalStatus_APPROVAL_STATUS_NEEDS_ITERATION
+	default:
+		return pb.ApprovalStatus_APPROVAL_STATUS_UNSPECIFIED
+	}
+}
