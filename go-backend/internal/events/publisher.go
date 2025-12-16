@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.uber.org/zap"
 
@@ -30,6 +31,12 @@ type Publisher interface {
 
 	// PublishTaskCancelled publishes a task cancelled event.
 	PublishTaskCancelled(job *domain.BacktestJob) error
+
+	// PublishScoutTrigger publishes a scout trigger event.
+	PublishScoutTrigger(event *ScoutTriggerEvent) error
+
+	// PublishScoutCancelled publishes a scout cancelled event.
+	PublishScoutCancelled(runID uuid.UUID) error
 
 	// Close closes the publisher connection.
 	Close() error
@@ -257,6 +264,17 @@ func (p *RabbitMQPublisher) PublishTaskCancelled(job *domain.BacktestJob) error 
 	return p.Publish(context.Background(), RoutingKeyTaskCancelled, event)
 }
 
+// PublishScoutTrigger publishes a scout trigger event.
+func (p *RabbitMQPublisher) PublishScoutTrigger(event *ScoutTriggerEvent) error {
+	return p.Publish(context.Background(), RoutingKeyScoutTrigger, event)
+}
+
+// PublishScoutCancelled publishes a scout cancelled event.
+func (p *RabbitMQPublisher) PublishScoutCancelled(runID uuid.UUID) error {
+	event := NewScoutCancelledEvent(runID)
+	return p.Publish(context.Background(), RoutingKeyScoutCancelled, event)
+}
+
 // Close closes the publisher connection.
 func (p *RabbitMQPublisher) Close() error {
 	p.mu.Lock()
@@ -314,6 +332,14 @@ func (p *NoOpPublisher) PublishTaskFailed(job *domain.BacktestJob, errMsg string
 }
 
 func (p *NoOpPublisher) PublishTaskCancelled(job *domain.BacktestJob) error {
+	return nil
+}
+
+func (p *NoOpPublisher) PublishScoutTrigger(event *ScoutTriggerEvent) error {
+	return nil
+}
+
+func (p *NoOpPublisher) PublishScoutCancelled(runID uuid.UUID) error {
 	return nil
 }
 

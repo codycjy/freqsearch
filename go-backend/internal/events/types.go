@@ -20,16 +20,27 @@ const (
 	RoutingKeyOptIteration  = "optimization.iteration"
 
 	// Strategy lifecycle events (for Python Agents)
-	RoutingKeyStrategyDiscovered     = "strategy.discovered"
+	RoutingKeyStrategyDiscovered      = "strategy.discovered"
 	RoutingKeyStrategyNeedsProcessing = "strategy.needs_processing"
 	RoutingKeyStrategyReadyForBacktest = "strategy.ready_for_backtest"
-	RoutingKeyStrategyApproved       = "strategy.approved"
-	RoutingKeyStrategyEvolve         = "strategy.evolve"
-	RoutingKeyStrategyArchived       = "strategy.archived"
+	RoutingKeyStrategyApproved        = "strategy.approved"
+	RoutingKeyStrategyEvolve          = "strategy.evolve"
+	RoutingKeyStrategyArchived        = "strategy.archived"
 
 	// Backtest events (bridging Go backend and Python agents)
 	RoutingKeyBacktestCompleted = "backtest.completed"
 	RoutingKeyBacktestFailed    = "backtest.failed"
+
+	// Agent heartbeat events
+	RoutingKeyAgentHeartbeat = "agent.heartbeat"
+
+	// Scout lifecycle events
+	RoutingKeyScoutTrigger   = "scout.trigger"
+	RoutingKeyScoutStarted   = "scout.started"
+	RoutingKeyScoutProgress  = "scout.progress"
+	RoutingKeyScoutCompleted = "scout.completed"
+	RoutingKeyScoutFailed    = "scout.failed"
+	RoutingKeyScoutCancelled = "scout.cancelled"
 )
 
 // Event types.
@@ -53,6 +64,17 @@ const (
 	// Backtest bridge events
 	EventTypeBacktestCompleted = "backtest.completed"
 	EventTypeBacktestFailed    = "backtest.failed"
+
+	// Agent heartbeat events
+	EventTypeAgentHeartbeat = "agent.heartbeat"
+
+	// Scout events
+	EventTypeScoutTrigger   = "scout.trigger"
+	EventTypeScoutStarted   = "scout.started"
+	EventTypeScoutProgress  = "scout.progress"
+	EventTypeScoutCompleted = "scout.completed"
+	EventTypeScoutFailed    = "scout.failed"
+	EventTypeScoutCancelled = "scout.cancelled"
 )
 
 // BaseEvent contains common fields for all events.
@@ -347,4 +369,134 @@ type StrategyArchivedEvent struct {
 	StrategyName string             `json:"strategy_name"`
 	Reason       string             `json:"reason"`
 	FinalMetrics map[string]float64 `json:"final_metrics,omitempty"`
+}
+
+// =============================================================================
+// Scout Lifecycle Events (for strategy discovery)
+// =============================================================================
+
+// ScoutTriggerEvent is published when a Scout run is triggered.
+type ScoutTriggerEvent struct {
+	BaseEvent
+	RunID         uuid.UUID `json:"run_id"`
+	Source        string    `json:"source"`        // "stratninja", "github", etc.
+	MaxStrategies int       `json:"max_strategies"` // Maximum strategies to fetch
+	TriggerType   string    `json:"trigger_type"`  // "manual", "scheduled"
+	TriggeredBy   string    `json:"triggered_by"`  // User ID or "system"
+}
+
+// NewScoutTriggerEvent creates a new ScoutTriggerEvent.
+func NewScoutTriggerEvent(run *domain.ScoutRun) *ScoutTriggerEvent {
+	return &ScoutTriggerEvent{
+		BaseEvent:     NewBaseEvent(EventTypeScoutTrigger),
+		RunID:         run.ID,
+		Source:        run.Source,
+		MaxStrategies: run.MaxStrategies,
+		TriggerType:   run.TriggerType.String(),
+		TriggeredBy:   run.TriggeredBy,
+	}
+}
+
+// ScoutStartedEvent is published when a Scout run starts executing.
+type ScoutStartedEvent struct {
+	BaseEvent
+	RunID  uuid.UUID `json:"run_id"`
+	Source string    `json:"source"`
+}
+
+// NewScoutStartedEvent creates a new ScoutStartedEvent.
+func NewScoutStartedEvent(run *domain.ScoutRun) *ScoutStartedEvent {
+	return &ScoutStartedEvent{
+		BaseEvent: NewBaseEvent(EventTypeScoutStarted),
+		RunID:     run.ID,
+		Source:    run.Source,
+	}
+}
+
+// ScoutProgressEvent is published during Scout run execution to report progress.
+type ScoutProgressEvent struct {
+	BaseEvent
+	RunID        uuid.UUID      `json:"run_id"`
+	Stage        string         `json:"stage"`         // "fetching", "validating", "submitting"
+	Progress     int            `json:"progress"`      // 0-100
+	Message      string         `json:"message"`
+	StageMetrics map[string]int `json:"stage_metrics,omitempty"`
+}
+
+// NewScoutProgressEvent creates a new ScoutProgressEvent.
+func NewScoutProgressEvent(runID uuid.UUID, stage string, progress int, message string, stageMetrics map[string]int) *ScoutProgressEvent {
+	return &ScoutProgressEvent{
+		BaseEvent:    NewBaseEvent(EventTypeScoutProgress),
+		RunID:        runID,
+		Stage:        stage,
+		Progress:     progress,
+		Message:      message,
+		StageMetrics: stageMetrics,
+	}
+}
+
+// ScoutCompletedEvent is published when a Scout run completes successfully.
+type ScoutCompletedEvent struct {
+	BaseEvent
+	RunID             uuid.UUID `json:"run_id"`
+	TotalFetched      int       `json:"total_fetched"`
+	Validated         int       `json:"validated"`
+	ValidationFailed  int       `json:"validation_failed"`
+	DuplicatesRemoved int       `json:"duplicates_removed"`
+	Submitted         int       `json:"submitted"`
+}
+
+// NewScoutCompletedEvent creates a new ScoutCompletedEvent.
+func NewScoutCompletedEvent(run *domain.ScoutRun) *ScoutCompletedEvent {
+	event := &ScoutCompletedEvent{
+		BaseEvent: NewBaseEvent(EventTypeScoutCompleted),
+		RunID:     run.ID,
+	}
+
+	if run.Metrics != nil {
+		event.TotalFetched = run.Metrics.TotalFetched
+		event.Validated = run.Metrics.Validated
+		event.ValidationFailed = run.Metrics.ValidationFailed
+		event.DuplicatesRemoved = run.Metrics.DuplicatesRemoved
+		event.Submitted = run.Metrics.Submitted
+	}
+
+	return event
+}
+
+// ScoutFailedEvent is published when a Scout run fails.
+type ScoutFailedEvent struct {
+	BaseEvent
+	RunID        uuid.UUID `json:"run_id"`
+	ErrorMessage string    `json:"error_message"`
+	Stage        string    `json:"stage"` // Stage where the failure occurred
+}
+
+// NewScoutFailedEvent creates a new ScoutFailedEvent.
+func NewScoutFailedEvent(run *domain.ScoutRun, stage string) *ScoutFailedEvent {
+	errMsg := ""
+	if run.ErrorMessage != nil {
+		errMsg = *run.ErrorMessage
+	}
+
+	return &ScoutFailedEvent{
+		BaseEvent:    NewBaseEvent(EventTypeScoutFailed),
+		RunID:        run.ID,
+		ErrorMessage: errMsg,
+		Stage:        stage,
+	}
+}
+
+// ScoutCancelledEvent is published when a Scout run is cancelled.
+type ScoutCancelledEvent struct {
+	BaseEvent
+	RunID uuid.UUID `json:"run_id"`
+}
+
+// NewScoutCancelledEvent creates a new ScoutCancelledEvent.
+func NewScoutCancelledEvent(runID uuid.UUID) *ScoutCancelledEvent {
+	return &ScoutCancelledEvent{
+		BaseEvent: NewBaseEvent(EventTypeScoutCancelled),
+		RunID:     runID,
+	}
 }

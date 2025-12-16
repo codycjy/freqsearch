@@ -1,7 +1,7 @@
 """FreqSearch Agents CLI and entry points."""
 
 import asyncio
-from typing import Optional
+from typing import Optional, Any
 
 import typer
 from rich.console import Console
@@ -12,7 +12,9 @@ from .config import get_settings
 from .agents.scout import run_scout
 from .agents.engineer import run_engineer
 from .agents.analyst import run_analyst
-from .core.messaging import message_broker
+from .core.messaging import message_broker, Events, publish_event
+
+logger = structlog.get_logger(__name__)
 
 # Configure structlog
 structlog.configure(
@@ -179,12 +181,37 @@ def serve(
     scout_enabled: bool = typer.Option(True, help="Enable Scout Agent"),
     engineer_enabled: bool = typer.Option(True, help="Enable Engineer Agent"),
     analyst_enabled: bool = typer.Option(True, help="Enable Analyst Agent"),
+    heartbeat_interval: int = typer.Option(15, help="Heartbeat interval in seconds"),
 ):
     """Start agents as message queue consumers."""
     from .core.messaging import Events, get_broker
 
     console.print("[bold blue]Starting Agent Service[/bold blue]")
     console.print(f"Scout: {scout_enabled}, Engineer: {engineer_enabled}, Analyst: {analyst_enabled}")
+    console.print(f"Heartbeat interval: {heartbeat_interval}s")
+
+    # Track current task for each agent
+    agent_tasks: dict[str, str | None] = {
+        "orchestrator": None,
+        "engineer": None,
+        "analyst": None,
+        "scout": None,
+    }
+
+    async def heartbeat_task(agent_type: str):
+        """Send periodic heartbeat for an agent."""
+        while True:
+            current_task = agent_tasks.get(agent_type)
+            status = "active" if current_task else "idle"
+            await publish_event(
+                Events.AGENT_HEARTBEAT,
+                {
+                    "agent_type": agent_type,
+                    "status": status,
+                    "current_task": current_task or "",
+                },
+            )
+            await asyncio.sleep(heartbeat_interval)
 
     async def _serve():
         broker = get_broker()
@@ -192,11 +219,18 @@ def serve(
 
         tasks = []
 
+        # Start heartbeat tasks for enabled agents
         if engineer_enabled:
+            tasks.append(asyncio.create_task(heartbeat_task("engineer")))
+
             # Subscribe to strategy.needs_processing
             async def handle_strategy_needs_processing(data):
+                agent_tasks["engineer"] = f"Processing: {data.get('name', 'unknown')}"
                 console.print(f"[cyan]Processing strategy: {data.get('name')}[/cyan]")
-                await run_engineer(input_data=data, mode="new")
+                try:
+                    await run_engineer(input_data=data, mode="new")
+                finally:
+                    agent_tasks["engineer"] = None
 
             tasks.append(
                 broker.subscribe(
@@ -208,8 +242,12 @@ def serve(
 
             # Subscribe to strategy.evolve
             async def handle_strategy_evolve(data):
+                agent_tasks["engineer"] = f"Evolving: {data.get('strategy_name', 'unknown')}"
                 console.print(f"[cyan]Evolving strategy: {data.get('strategy_name')}[/cyan]")
-                await run_engineer(input_data=data, mode="evolve")
+                try:
+                    await run_engineer(input_data=data, mode="evolve")
+                finally:
+                    agent_tasks["engineer"] = None
 
             tasks.append(
                 broker.subscribe(
@@ -220,10 +258,16 @@ def serve(
             )
 
         if analyst_enabled:
+            tasks.append(asyncio.create_task(heartbeat_task("analyst")))
+
             # Subscribe to backtest.completed
             async def handle_backtest_completed(data):
+                agent_tasks["analyst"] = f"Analyzing: {data.get('job_id', 'unknown')}"
                 console.print(f"[cyan]Analyzing backtest: {data.get('job_id')}[/cyan]")
-                await run_analyst(backtest_result=data)
+                try:
+                    await run_analyst(backtest_result=data)
+                finally:
+                    agent_tasks["analyst"] = None
 
             tasks.append(
                 broker.subscribe(
@@ -232,6 +276,35 @@ def serve(
                     handle_backtest_completed,
                 )
             )
+
+        if scout_enabled:
+            tasks.append(asyncio.create_task(heartbeat_task("scout")))
+
+            # Subscribe to scout.trigger
+            async def handle_scout_trigger(data):
+                run_id = data.get("run_id")
+                source = data.get("source", "stratninja")
+                max_strategies = data.get("max_strategies", 50)
+
+                agent_tasks["scout"] = f"Scout: {source} (run: {run_id})"
+                console.print(f"[cyan]Scout triggered: {source}, limit: {max_strategies}, run_id: {run_id}[/cyan]")
+                try:
+                    await run_scout(source=source, limit=max_strategies, run_id=run_id)
+                except Exception as e:
+                    logger.error("Scout run failed", error=str(e), run_id=run_id)
+                finally:
+                    agent_tasks["scout"] = None
+
+            tasks.append(
+                broker.subscribe(
+                    Events.SCOUT_TRIGGER,
+                    "scout-trigger-queue",
+                    handle_scout_trigger,
+                )
+            )
+
+        # Always start orchestrator heartbeat
+        tasks.append(asyncio.create_task(heartbeat_task("orchestrator")))
 
         console.print("[green]Agent service started. Press Ctrl+C to stop.[/green]")
 

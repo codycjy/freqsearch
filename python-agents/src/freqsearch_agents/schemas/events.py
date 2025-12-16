@@ -133,3 +133,40 @@ class StrategyArchivedEvent(BaseEvent):
     strategy_name: str
     reason: str
     final_metrics: dict[str, float] = Field(default_factory=dict)
+
+
+class AgentHeartbeatEvent(BaseEvent):
+    """Event: Agent heartbeat for status monitoring."""
+
+    agent_type: str  # orchestrator, engineer, analyst, scout
+    status: str  # active, idle
+    current_task: str | None = None
+
+
+class ScoutProgressEvent(BaseEvent):
+    """Event: Scout Agent progress update."""
+
+    run_id: str
+    stage: str  # "fetch", "validate", "deduplicate", "submit"
+    progress: int  # 0-100
+    message: str
+    stage_metrics: dict[str, int] = Field(default_factory=dict)
+
+
+class ScoutCompletedEvent(BaseEvent):
+    """Event: Scout Agent run completed successfully."""
+
+    run_id: str
+    total_fetched: int
+    validated: int
+    validation_failed: int
+    duplicates_removed: int
+    submitted: int
+
+
+class ScoutFailedEvent(BaseEvent):
+    """Event: Scout Agent run failed."""
+
+    run_id: str
+    error_message: str
+    stage: str | None = None

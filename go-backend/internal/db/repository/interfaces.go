@@ -151,6 +151,33 @@ type OptimizationRepository interface {
 
 	// UpdateIterationFeedback updates the engineer and analyst feedback for an iteration.
 	UpdateIterationFeedback(ctx context.Context, iterID uuid.UUID, engineerChanges, analystFeedback string, approval domain.ApprovalStatus) error
+
+	// GetIterationsInTimeRange retrieves iterations within a time range (for performance charts).
+	GetIterationsInTimeRange(ctx context.Context, start, end time.Time) ([]*domain.OptimizationIteration, error)
+}
+
+// ScoutRepository defines the interface for scout data access.
+type ScoutRepository interface {
+	// Run operations
+	CreateRun(ctx context.Context, run *domain.ScoutRun) error
+	GetRunByID(ctx context.Context, id uuid.UUID) (*domain.ScoutRun, error)
+	UpdateRun(ctx context.Context, run *domain.ScoutRun) error
+	UpdateRunStatus(ctx context.Context, id uuid.UUID, status domain.ScoutRunStatus, errorMsg *string) error
+	CompleteRun(ctx context.Context, id uuid.UUID, metrics *domain.ScoutMetrics) error
+	FailRun(ctx context.Context, id uuid.UUID, errorMsg string) error
+	ListRuns(ctx context.Context, query domain.ScoutRunQuery) ([]*domain.ScoutRun, int, error)
+	GetActiveRun(ctx context.Context) (*domain.ScoutRun, error)
+
+	// Schedule operations
+	CreateSchedule(ctx context.Context, schedule *domain.ScoutSchedule) error
+	GetScheduleByID(ctx context.Context, id uuid.UUID) (*domain.ScoutSchedule, error)
+	GetScheduleByName(ctx context.Context, name string) (*domain.ScoutSchedule, error)
+	UpdateSchedule(ctx context.Context, schedule *domain.ScoutSchedule) error
+	DeleteSchedule(ctx context.Context, id uuid.UUID) error
+	ListSchedules(ctx context.Context, query domain.ScoutScheduleQuery) ([]*domain.ScoutSchedule, int, error)
+	GetActiveSchedules(ctx context.Context) ([]*domain.ScoutSchedule, error)
+	UpdateScheduleLastRun(ctx context.Context, scheduleID, runID uuid.UUID) error
+	UpdateScheduleNextRun(ctx context.Context, scheduleID uuid.UUID, nextRunAt time.Time) error
 }
 
 // Repositories aggregates all repository interfaces.
@@ -159,6 +186,7 @@ type Repositories struct {
 	BacktestJob  BacktestJobRepository
 	Result       BacktestResultRepository
 	Optimization OptimizationRepository
+	Scout        ScoutRepository
 }
 
 // NewRepositories creates a new Repositories instance with all PostgreSQL implementations.
@@ -168,5 +196,6 @@ func NewRepositories(pool *db.Pool) *Repositories {
 		BacktestJob:  NewBacktestJobRepository(pool),
 		Result:       NewBacktestResultRepository(pool),
 		Optimization: NewOptimizationRepository(pool),
+		Scout:        NewScoutRepository(pool),
 	}
 }

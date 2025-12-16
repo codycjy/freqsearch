@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -505,6 +506,64 @@ func (r *optimizationRepo) UpdateIterationFeedback(
 	}
 
 	return nil
+}
+
+// GetIterationsInTimeRange retrieves iterations within a time range (for performance charts).
+func (r *optimizationRepo) GetIterationsInTimeRange(ctx context.Context, start, end time.Time) ([]*domain.OptimizationIteration, error) {
+	query := `
+		SELECT
+			oi.id, oi.optimization_run_id, oi.iteration_number, oi.strategy_id,
+			oi.backtest_job_id, oi.result_id, oi.engineer_changes, oi.analyst_feedback,
+			oi.approval, oi.created_at
+		FROM optimization_iterations oi
+		WHERE oi.created_at >= $1 AND oi.created_at <= $2
+		ORDER BY oi.created_at ASC
+	`
+
+	rows, err := r.pool.Query(ctx, query, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query iterations in time range: %w", err)
+	}
+	defer rows.Close()
+
+	var iterations []*domain.OptimizationIteration
+	for rows.Next() {
+		iter := &domain.OptimizationIteration{}
+		var engineerChanges, analystFeedback *string
+		var approvalStr string
+
+		err := rows.Scan(
+			&iter.ID,
+			&iter.OptimizationRunID,
+			&iter.IterationNumber,
+			&iter.StrategyID,
+			&iter.BacktestJobID,
+			&iter.ResultID,
+			&engineerChanges,
+			&analystFeedback,
+			&approvalStr,
+			&iter.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan iteration row: %w", err)
+		}
+
+		if engineerChanges != nil {
+			iter.EngineerChanges = *engineerChanges
+		}
+		if analystFeedback != nil {
+			iter.AnalystFeedback = *analystFeedback
+		}
+		iter.Approval = domain.ApprovalStatusFromString(approvalStr)
+
+		iterations = append(iterations, iter)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating iteration rows: %w", err)
+	}
+
+	return iterations, nil
 }
 
 // scanRun scans a single row into an OptimizationRun.

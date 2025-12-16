@@ -35,6 +35,17 @@ class Events:
     BACKTEST_COMPLETED = "backtest.completed"
     BACKTEST_FAILED = "backtest.failed"
 
+    # Scout lifecycle
+    SCOUT_TRIGGER = "scout.trigger"
+    SCOUT_STARTED = "scout.started"
+    SCOUT_PROGRESS = "scout.progress"
+    SCOUT_COMPLETED = "scout.completed"
+    SCOUT_FAILED = "scout.failed"
+    SCOUT_CANCELLED = "scout.cancelled"
+
+    # Agent heartbeat
+    AGENT_HEARTBEAT = "agent.heartbeat"
+
 
 class MessageBroker:
     """RabbitMQ message broker for agent communication."""

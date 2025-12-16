@@ -25,18 +25,32 @@ async def fetch_strategies_node(
 
     Args:
         state: Current agent state
-        config: Optional configuration (contains limit)
+        config: Optional configuration (contains limit and run_id)
 
     Returns:
         State update with raw_strategies
     """
     source_name = state["current_source"]
     limit = 50
+    run_id = None
 
     if config and "configurable" in config:
         limit = config["configurable"].get("limit", 50)
+        run_id = config["configurable"].get("run_id")
 
-    logger.info("Fetching strategies", source=source_name, limit=limit)
+    logger.info("Fetching strategies", source=source_name, limit=limit, run_id=run_id)
+
+    # Publish progress: starting fetch
+    if run_id:
+        await publish_event(
+            routing_key=Events.SCOUT_PROGRESS,
+            body={
+                "run_id": run_id,
+                "stage": "fetch",
+                "progress": 0,
+                "message": f"Starting strategy fetch from {source_name}",
+            },
+        )
 
     # Select source implementation
     if source_name == "stratninja":
@@ -70,6 +84,19 @@ async def fetch_strategies_node(
 
         logger.info("Fetched strategies", count=len(raw_strategies))
 
+        # Publish progress: fetch complete (25%)
+        if run_id:
+            await publish_event(
+                routing_key=Events.SCOUT_PROGRESS,
+                body={
+                    "run_id": run_id,
+                    "stage": "fetch",
+                    "progress": 25,
+                    "message": f"Fetched {len(raw_strategies)} strategies",
+                    "stage_metrics": {"total_fetched": len(raw_strategies)},
+                },
+            )
+
         return {
             "raw_strategies": raw_strategies,
             "total_fetched": len(raw_strategies),
@@ -96,11 +123,27 @@ async def validate_strategies_node(
 
     Args:
         state: Current agent state
-        config: Optional configuration
+        config: Optional configuration (contains run_id)
 
     Returns:
         State update with validated_strategies
     """
+    run_id = None
+    if config and "configurable" in config:
+        run_id = config["configurable"].get("run_id")
+
+    # Publish progress: starting validation
+    if run_id:
+        await publish_event(
+            routing_key=Events.SCOUT_PROGRESS,
+            body={
+                "run_id": run_id,
+                "stage": "validate",
+                "progress": 25,
+                "message": f"Starting validation of {len(state['raw_strategies'])} strategies",
+            },
+        )
+
     parser = FreqtradeCodeParser()
     validated = []
     failed_count = 0
@@ -154,6 +197,22 @@ async def validate_strategies_node(
         failed=failed_count,
     )
 
+    # Publish progress: validation complete (50%)
+    if run_id:
+        await publish_event(
+            routing_key=Events.SCOUT_PROGRESS,
+            body={
+                "run_id": run_id,
+                "stage": "validate",
+                "progress": 50,
+                "message": f"Validated {len(validated)} strategies, {failed_count} failed",
+                "stage_metrics": {
+                    "validated": len(validated),
+                    "validation_failed": failed_count,
+                },
+            },
+        )
+
     return {
         "validated_strategies": validated,
         "validation_failed": failed_count,
@@ -171,11 +230,27 @@ async def deduplicate_node(
 
     Args:
         state: Current agent state
-        config: Optional configuration
+        config: Optional configuration (contains run_id)
 
     Returns:
         State update with unique_strategies
     """
+    run_id = None
+    if config and "configurable" in config:
+        run_id = config["configurable"].get("run_id")
+
+    # Publish progress: starting deduplication
+    if run_id:
+        await publish_event(
+            routing_key=Events.SCOUT_PROGRESS,
+            body={
+                "run_id": run_id,
+                "stage": "deduplicate",
+                "progress": 50,
+                "message": f"Starting deduplication of {len(state['validated_strategies'])} strategies",
+            },
+        )
+
     strategies = state["validated_strategies"]
 
     if not strategies:
@@ -211,6 +286,22 @@ async def deduplicate_node(
         duplicates=len(duplicates),
     )
 
+    # Publish progress: deduplication complete (75%)
+    if run_id:
+        await publish_event(
+            routing_key=Events.SCOUT_PROGRESS,
+            body={
+                "run_id": run_id,
+                "stage": "deduplicate",
+                "progress": 75,
+                "message": f"Found {len(final_unique)} unique strategies, removed {len(strategies) - len(final_unique)} duplicates",
+                "stage_metrics": {
+                    "unique": len(final_unique),
+                    "duplicates_removed": len(strategies) - len(final_unique),
+                },
+            },
+        )
+
     return {
         "unique_strategies": final_unique,
         "duplicates_removed": len(strategies) - len(final_unique),
@@ -227,11 +318,27 @@ async def submit_strategies_node(
 
     Args:
         state: Current agent state
-        config: Optional configuration
+        config: Optional configuration (contains run_id)
 
     Returns:
         State update with submitted_count
     """
+    run_id = None
+    if config and "configurable" in config:
+        run_id = config["configurable"].get("run_id")
+
+    # Publish progress: starting submission
+    if run_id:
+        await publish_event(
+            routing_key=Events.SCOUT_PROGRESS,
+            body={
+                "run_id": run_id,
+                "stage": "submit",
+                "progress": 75,
+                "message": f"Starting submission of {len(state['unique_strategies'])} strategies",
+            },
+        )
+
     strategies = state["unique_strategies"]
     submitted = 0
     errors = []
@@ -267,6 +374,22 @@ async def submit_strategies_node(
             errors.append(error_msg)
 
     logger.info("Submission complete", submitted=submitted, errors=len(errors))
+
+    # Publish progress: submission complete (100%)
+    if run_id:
+        await publish_event(
+            routing_key=Events.SCOUT_PROGRESS,
+            body={
+                "run_id": run_id,
+                "stage": "submit",
+                "progress": 100,
+                "message": f"Submitted {submitted} strategies",
+                "stage_metrics": {
+                    "submitted": submitted,
+                    "errors": len(errors),
+                },
+            },
+        )
 
     return {
         "submitted_count": submitted,

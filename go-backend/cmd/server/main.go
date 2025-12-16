@@ -122,7 +122,15 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 		eventPublisher = events.NewNoOpPublisher()
 	}
 
-	// 5. Initialize scheduler
+	// 5. Initialize Scout Scheduler
+	logger.Info("Initializing Scout scheduler...")
+	scoutSched := scheduler.NewScoutScheduler(repos, eventPublisher, logger)
+	if err := scoutSched.Start(); err != nil {
+		return fmt.Errorf("failed to start scout scheduler: %w", err)
+	}
+	logger.Info("Scout scheduler started")
+
+	// 6. Initialize scheduler
 	logger.Info("Initializing scheduler...")
 	sched := scheduler.NewScheduler(
 		&cfg.GoBackend.Scheduler,
@@ -137,9 +145,9 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 	}
 	logger.Info("Scheduler started")
 
-	// 6. Start HTTP server (health/metrics)
+	// 7. Start HTTP server (health/metrics + REST API)
 	httpAddr := fmt.Sprintf(":%d", cfg.GoBackend.HTTPPort)
-	httpServer := httpapi.NewServer(httpAddr, pool, sched, logger)
+	httpServer := httpapi.NewServer(httpAddr, pool, repos, sched, logger)
 
 	go func() {
 		logger.Info("HTTP server starting", zap.String("address", httpAddr))
@@ -148,7 +156,7 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 		}
 	}()
 
-	// 7. Start gRPC server
+	// 8. Start gRPC server
 	grpcAddr := fmt.Sprintf(":%d", cfg.GoBackend.GRPCPort)
 	grpcServer := grpc.NewServer(repos, sched, logger)
 
@@ -188,6 +196,13 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 		logger.Error("Error stopping scheduler", zap.Error(err))
 	}
 	logger.Info("Scheduler stopped")
+
+	// Stop Scout scheduler
+	logger.Info("Stopping Scout scheduler...")
+	if err := scoutSched.Stop(); err != nil {
+		logger.Error("Error stopping scout scheduler", zap.Error(err))
+	}
+	logger.Info("Scout scheduler stopped")
 
 	return nil
 }

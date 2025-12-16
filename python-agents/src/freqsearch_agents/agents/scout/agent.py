@@ -18,6 +18,7 @@ from langgraph.graph import END, StateGraph
 import structlog
 
 from ...core.state import ScoutState
+from ...core.messaging import publish_event, Events
 from .nodes import (
     fetch_strategies_node,
     validate_strategies_node,
@@ -59,12 +60,14 @@ def create_scout_agent() -> StateGraph:
 async def run_scout(
     source: str = "stratninja",
     limit: int = 50,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the Scout Agent to discover strategies.
 
     Args:
         source: Data source to use ("stratninja", "github", etc.)
         limit: Maximum number of strategies to fetch
+        run_id: Optional run ID for tracking and progress reporting
 
     Returns:
         Final state with discovery results
@@ -73,37 +76,79 @@ async def run_scout(
         "Starting Scout Agent",
         source=source,
         limit=limit,
+        run_id=run_id,
     )
 
-    # Create agent
-    agent = create_scout_agent()
+    # Publish scout.started event
+    if run_id:
+        await publish_event(
+            routing_key=Events.SCOUT_STARTED,
+            body={
+                "run_id": run_id,
+                "source": source,
+            },
+        )
 
-    # Initialize state
-    initial_state: ScoutState = {
-        "messages": [],
-        "current_source": source,
-        "raw_strategies": [],
-        "validated_strategies": [],
-        "unique_strategies": [],
-        "total_fetched": 0,
-        "validation_failed": 0,
-        "duplicates_removed": 0,
-        "submitted_count": 0,
-        "errors": [],
-    }
+    try:
+        # Create agent
+        agent = create_scout_agent()
 
-    # Add configuration
-    config = {"configurable": {"limit": limit}}
+        # Initialize state
+        initial_state: ScoutState = {
+            "messages": [],
+            "current_source": source,
+            "raw_strategies": [],
+            "validated_strategies": [],
+            "unique_strategies": [],
+            "total_fetched": 0,
+            "validation_failed": 0,
+            "duplicates_removed": 0,
+            "submitted_count": 0,
+            "errors": [],
+        }
 
-    # Run the agent
-    final_state = await agent.ainvoke(initial_state, config=config)
+        # Add configuration with run_id
+        config = {"configurable": {"limit": limit, "run_id": run_id}}
 
-    logger.info(
-        "Scout Agent completed",
-        total_fetched=final_state["total_fetched"],
-        validation_failed=final_state["validation_failed"],
-        duplicates_removed=final_state["duplicates_removed"],
-        submitted=final_state["submitted_count"],
-    )
+        # Run the agent
+        final_state = await agent.ainvoke(initial_state, config=config)
 
-    return final_state
+        logger.info(
+            "Scout Agent completed",
+            total_fetched=final_state["total_fetched"],
+            validation_failed=final_state["validation_failed"],
+            duplicates_removed=final_state["duplicates_removed"],
+            submitted=final_state["submitted_count"],
+            run_id=run_id,
+        )
+
+        # Publish scout.completed event
+        if run_id:
+            await publish_event(
+                routing_key=Events.SCOUT_COMPLETED,
+                body={
+                    "run_id": run_id,
+                    "total_fetched": final_state["total_fetched"],
+                    "validated": len(final_state["validated_strategies"]),
+                    "validation_failed": final_state["validation_failed"],
+                    "duplicates_removed": final_state["duplicates_removed"],
+                    "submitted": final_state["submitted_count"],
+                },
+            )
+
+        return final_state
+
+    except Exception as e:
+        logger.error("Scout Agent failed", error=str(e), run_id=run_id)
+
+        # Publish scout.failed event
+        if run_id:
+            await publish_event(
+                routing_key=Events.SCOUT_FAILED,
+                body={
+                    "run_id": run_id,
+                    "error_message": str(e),
+                },
+            )
+
+        raise

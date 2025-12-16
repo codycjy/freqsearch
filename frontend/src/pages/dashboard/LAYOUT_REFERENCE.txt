@@ -1,0 +1,209 @@
+Dashboard Layout Reference
+=========================
+
+This is how the dashboard components are structured:
+
+
+┌────────────────────────────────────────────────────────────────────────────────┐
+│  FreqSearch Admin Dashboard                                        [User Menu]  │
+│  Real-time monitoring of backtest jobs, optimizations, and agent activity      │
+├────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                 │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  ┌────────┐│
+│  │ Pending Jobs     │  │ Running Jobs     │  │ Completed        │  │ Failed ││
+│  │                  │  │                  │  │                  │  │        ││
+│  │      12          │  │       3          │  │      156         │  │   2    ││
+│  │                  │  │                  │  │                  │  │        ││
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘  └────────┘│
+│     [BLUE ACCENT]        [YELLOW ACCENT]       [GREEN ACCENT]       [RED ACC] │
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────┐  ┌──────────────────────┐│
+│  │ Active Optimizations                            │  │ Agent Status         ││
+│  │                                                  │  │                      ││
+│  │  ┌──────────────────────────────────────────┐  │  │ ┌──────────────────┐ ││
+│  │  │ Opt-001: RSI Strategy         [running]  │  │  │ │ Orchestrator     │ ││
+│  │  │ ID: abc-123                   [pause][x] │  │  │ │ ● Active         │ ││
+│  │  │                                          │  │  │ └──────────────────┘ ││
+│  │  │ Iteration: 5/10                          │  │  │ ┌──────────────────┐ ││
+│  │  │ [████████████▌              ] 50%        │  │  │ │ Engineer         │ ││
+│  │  │                                          │  │  │ │ ● Idle           │ ││
+│  │  │ ┌─────────────────────────────────────┐ │  │  │ │ 5m ago           │ ││
+│  │  │ │ Best Sharpe Ratio                   │ │  │  │ └──────────────────┘ ││
+│  │  │ │                                     │ │  │  │ ┌──────────────────┐ ││
+│  │  │ │       1.85              [Best]      │ │  │  │ │ Analyst          │ ││
+│  │  │ └─────────────────────────────────────┘ │  │  │ │ ● Idle           │ ││
+│  │  │                                          │  │  │ │ 2m ago           │ ││
+│  │  │ Last updated: Dec 15, 11:10 AM          │  │  │ └──────────────────┘ ││
+│  │  └──────────────────────────────────────────┘  │  │ ┌──────────────────┐ ││
+│  │                                                  │  │ │ Scout            │ ││
+│  │  ┌──────────────────────────────────────────┐  │  │ │ ○ Offline        │ ││
+│  │  │ Opt-002: MACD Strategy        [running]  │  │  │ └──────────────────┘ ││
+│  │  │ ID: def-456                   [pause][x] │  │  └──────────────────────┘│
+│  │  │                                          │  │                           │
+│  │  │ Iteration: 2/15                          │  │                           │
+│  │  │ [█████▌                      ] 13%       │  │                           │
+│  │  │                                          │  │                           │
+│  │  │ ┌─────────────────────────────────────┐ │  │                           │
+│  │  │ │ Best Sharpe Ratio                   │ │  │                           │
+│  │  │ │                                     │ │  │                           │
+│  │  │ │       0.92                          │ │  │                           │
+│  │  │ └─────────────────────────────────────┘ │  │                           │
+│  │  │                                          │  │                           │
+│  │  │ Last updated: Dec 15, 11:09 AM          │  │                           │
+│  │  └──────────────────────────────────────────┘  │                           │
+│  └─────────────────────────────────────────────────┘                           │
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │ Performance Overview (Last 24h)                                         │  │
+│  │                                                                         │  │
+│  │  2.5 ┤                                                    ╭───╮        │  │
+│  │      │                                          ╭────╮   ╭╯   ╰╮       │  │
+│  │  2.0 ┤                                    ╭────╮│    ╰──╮│     │       │  │
+│  │      │                              ╭────╮│    ││      ││      ╰╮      │  │
+│  │  1.5 ┤                         ╭───╮│    ││    ╰╯      ╰╯       │      │  │
+│  │      │                    ╭───╮│   ││    ╰╯                     ╰─╮    │  │
+│  │  1.0 ┤               ╭───╮│   ││   ╰╯                             ╰─╮  │  │
+│  │      │          ╭───╮│   ││   ╰╯                                    ╰╮ │  │
+│  │  0.5 ┤     ╭───╮│   ││   ╰╯                                          ╰ │  │
+│  │      │╭───╮│   ││   ╰╯                                                 │  │
+│  │  0.0 └┴───┴┴───┴┴───────────────────────────────────────────────────── │  │
+│  │      12AM  6AM  12PM  6PM  12AM  6AM  12PM  6PM  12AM                 │  │
+│  │                                                                         │  │
+│  │  ┌──────────────┬──────────────┬──────────────┐                       │  │
+│  │  │ Avg Sharpe   │ Best Sharpe  │ Data Points  │                       │  │
+│  │  │    1.23      │    1.85      │     156      │                       │  │
+│  │  └──────────────┴──────────────┴──────────────┘                       │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+└────────────────────────────────────────────────────────────────────────────────┘
+
+
+Component Mapping:
+==================
+
+Row 1: QueueStats.tsx
+- 4 Tremor Card components in a responsive grid
+- Color-coded top borders (blue, yellow, green, red)
+- Tremor Metric for large numbers
+- Tremor BadgeDelta for status indicators
+
+Row 2: Two-column layout (Ant Design Row/Col)
+- Left Column (lg={16}): Multiple OptimizationCard.tsx components
+  - Tremor Card wrapper
+  - Tremor ProgressBar for iteration tracking
+  - Tremor Metric for Sharpe ratio
+  - Ant Design Button for actions
+  - Tremor Badge for status
+
+- Right Column (lg={8}): AgentStatus.tsx
+  - Tremor Card wrapper
+  - Tremor Badge for status indicators (active/idle/offline)
+  - Custom hover effects
+
+Row 3: PerformanceChart.tsx
+- Tremor Card wrapper
+- Recharts AreaChart with gradient fills
+- Custom tooltip component
+- Summary statistics in grid layout
+
+
+Responsive Behavior:
+====================
+
+Desktop (lg+):
+- Queue stats: 4 columns
+- Optimizations: 66% width (16/24)
+- Agent status: 33% width (8/24)
+
+Tablet (md):
+- Queue stats: 2 columns
+- Optimizations: Full width
+- Agent status: Full width
+
+Mobile (xs):
+- Queue stats: 1 column (stacked)
+- All components: Full width (stacked)
+
+
+Color Palette:
+==============
+
+Status Colors:
+- Pending:   #3b82f6 (blue-500)    - Tremor: "blue"
+- Running:   #10b981 (emerald-500) - Tremor: "emerald"
+- Idle:      #f59e0b (yellow-500)  - Tremor: "yellow"
+- Failed:    #ef4444 (red-500)     - Tremor: "red"
+- Offline:   #6b7280 (gray-500)    - Tremor: "gray"
+
+Backgrounds:
+- Primary:   #ffffff (white)
+- Secondary: #f9fafb (gray-50)
+- Border:    #e5e7eb (gray-200)
+
+Text:
+- Primary:   #111827 (gray-900)
+- Secondary: #6b7280 (gray-500)
+- Accent:    #3b82f6 (blue-500)
+
+
+Interactive Elements:
+=====================
+
+Buttons:
+- Pause: Ant Design Button with PauseCircleOutlined icon
+- Resume: PlayCircleOutlined icon
+- Cancel: CloseCircleOutlined icon (red/danger)
+- All buttons have Tooltip for accessibility
+
+Hover States:
+- Cards: shadow-md on hover
+- Agent rows: bg-gray-50 on hover
+- Chart: Custom tooltip on data point hover
+
+Loading States:
+- Skeleton loaders with animate-pulse
+- Gray placeholders matching component dimensions
+
+
+Data Flow:
+==========
+
+1. DashboardPage (index.tsx) fetches data:
+   ├─► useCustom('/backtests/queue/stats') → QueueStats
+   ├─► useList('optimizations', filters) → OptimizationCard[]
+   ├─► useCustom('/agents/status') → AgentStatus
+   └─► useCustom('/optimizations/performance') → PerformanceChart
+
+2. Real-time updates via liveMode: 'auto'
+   └─► Subscribes to WebSocket events
+       └─► Auto-refreshes components on updates
+
+3. User actions (pause/resume/cancel)
+   └─► Callbacks passed as props to OptimizationCard
+       └─► TODO: Implement with useUpdate/useDelete hooks
+
+
+Empty States:
+=============
+
+No Active Optimizations:
+┌──────────────────────────────────────┐
+│                                      │
+│         [Document Icon]              │
+│                                      │
+│    No active optimizations           │
+│    Start a new optimization to       │
+│    see progress here                 │
+│                                      │
+└──────────────────────────────────────┘
+
+No Performance Data:
+┌──────────────────────────────────────┐
+│                                      │
+│         [Chart Icon]                 │
+│                                      │
+│    No performance data available     │
+│    Start an optimization to see      │
+│    trends                            │
+│                                      │
+└──────────────────────────────────────┘

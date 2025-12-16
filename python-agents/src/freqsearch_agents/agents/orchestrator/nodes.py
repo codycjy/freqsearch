@@ -10,6 +10,7 @@ from ...core.messaging import publish_event, Events
 from ...agents.engineer.agent import run_engineer
 from ...agents.analyst.agent import run_analyst
 from ...schemas.diagnosis import DiagnosisStatus
+from ...grpc_client.client import FreqSearchClient, BacktestConfig, ConnectionError as GrpcConnectionError
 
 logger = structlog.get_logger(__name__)
 
@@ -182,17 +183,42 @@ async def submit_backtest_node(
     )
 
     try:
-        # NOTE: This is a placeholder for actual gRPC client implementation
-        # In real implementation, would use:
-        # from ...grpc_client import FreqSearchClient
-        # client = FreqSearchClient("localhost:50051")
-        # job = await client.submit_backtest(strategy_id, backtest_config)
+        # Get gRPC configuration
+        grpc_address = config.get("grpc_address", "localhost:50051") if config else "localhost:50051"
 
-        # For now, simulate job submission
-        job_id = f"job_{run_id}_i{iteration}_{strategy_id}"
+        # Get backtest configuration from config or use defaults
+        backtest_config_data = config.get("backtest_config", {}) if config else {}
+        backtest_cfg = BacktestConfig(
+            exchange=backtest_config_data.get("exchange", "binance"),
+            pairs=backtest_config_data.get("pairs", ["BTC/USDT"]),
+            timeframe=backtest_config_data.get("timeframe", "1h"),
+            timerange_start=backtest_config_data.get("timerange_start", "20230101"),
+            timerange_end=backtest_config_data.get("timerange_end", "20230131"),
+            dry_run_wallet=backtest_config_data.get("dry_run_wallet", 1000.0),
+            max_open_trades=backtest_config_data.get("max_open_trades", 3),
+            stake_amount=backtest_config_data.get("stake_amount", "unlimited"),
+        )
+
+        # Submit backtest via gRPC
+        async with FreqSearchClient(grpc_address) as client:
+            logger.debug(
+                "Calling gRPC submit_backtest",
+                address=grpc_address,
+                strategy_id=strategy_id,
+                optimization_run_id=run_id,
+            )
+
+            response = await client.submit_backtest(
+                strategy_id=strategy_id,
+                config=backtest_cfg,
+                optimization_run_id=run_id,
+                priority=config.get("priority", 0) if config else 0,
+            )
+
+            job_id = response["job"]["id"]
 
         logger.info(
-            "Backtest submitted",
+            "Backtest submitted via gRPC",
             job_id=job_id,
             strategy=strategy_id,
         )
@@ -212,6 +238,13 @@ async def submit_backtest_node(
             "current_backtest_job_id": job_id,
         }
 
+    except GrpcConnectionError as e:
+        logger.error("gRPC connection failed", strategy=strategy_id, error=str(e))
+        return {
+            "errors": state["errors"] + [f"gRPC connection error: {str(e)}"],
+            "terminated": True,
+            "termination_reason": "grpc_connection_failed",
+        }
     except Exception as e:
         logger.exception("Failed to submit backtest", strategy=strategy_id, error=str(e))
         return {
@@ -248,50 +281,89 @@ async def wait_for_result_node(
     logger.info("Waiting for backtest to complete", job_id=job_id)
 
     # Configuration
+    grpc_address = config.get("grpc_address", "localhost:50051") if config else "localhost:50051"
     poll_interval = config.get("poll_interval", 5.0) if config else 5.0
     max_wait_time = config.get("max_wait_time", 3600.0) if config else 3600.0
     elapsed = 0.0
 
     try:
-        # NOTE: This is a placeholder for actual gRPC polling
-        # In real implementation, would use:
-        # from ...grpc_client import FreqSearchClient
-        # client = FreqSearchClient("localhost:50051")
-        # while elapsed < max_wait_time:
-        #     job = await client.get_backtest_job(job_id)
-        #     if job.status in ["COMPLETED", "FAILED"]:
-        #         break
-        #     await asyncio.sleep(poll_interval)
-        #     elapsed += poll_interval
+        # Poll for job completion using gRPC
+        async with FreqSearchClient(grpc_address) as client:
+            job_status = None
+            job_data = None
 
-        # Simulate polling
-        while elapsed < max_wait_time:
-            # In real implementation, check job status
-            # For now, simulate completion after short wait
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
+            while elapsed < max_wait_time:
+                logger.debug("Polling backtest job status", job_id=job_id, elapsed=elapsed)
 
-            # Simulate completion after first poll
-            if elapsed >= poll_interval:
-                break
+                # Get current job status
+                job_data = await client.get_backtest_job(job_id)
+                job_status = job_data["job"]["status"]
 
-        # Simulate fetching result
-        # In real implementation, this would be the actual backtest result from gRPC
-        result = {
-            "job_id": job_id,
-            "strategy_id": state["current_strategy_id"],
-            "status": "COMPLETED",
-            "total_trades": 150,
-            "profit_pct": 12.5,
-            "win_rate": 0.58,
-            "max_drawdown_pct": 8.3,
-            "sharpe_ratio": 1.85,
-            "strategy_code": "# Generated strategy code",
-            "trades": [],  # Full trade list would be here
-        }
+                logger.debug("Job status", job_id=job_id, status=job_status)
+
+                # Check if job is in terminal state
+                if job_status == "JOB_STATUS_COMPLETED":
+                    logger.info("Backtest completed successfully", job_id=job_id)
+                    break
+                elif job_status == "JOB_STATUS_FAILED":
+                    error_msg = job_data["job"].get("error_message", "Unknown error")
+                    logger.error("Backtest failed", job_id=job_id, error=error_msg)
+                    return {
+                        "errors": state["errors"] + [f"Backtest failed: {error_msg}"],
+                        "terminated": True,
+                        "termination_reason": "backtest_failed",
+                    }
+                elif job_status == "JOB_STATUS_CANCELLED":
+                    logger.warning("Backtest was cancelled", job_id=job_id)
+                    return {
+                        "errors": state["errors"] + ["Backtest was cancelled"],
+                        "terminated": True,
+                        "termination_reason": "backtest_cancelled",
+                    }
+
+                # Wait before next poll
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+
+            # Check if we timed out
+            if elapsed >= max_wait_time:
+                logger.error("Backtest timeout", job_id=job_id, elapsed=elapsed)
+                return {
+                    "errors": state["errors"] + [f"Backtest timeout after {max_wait_time}s"],
+                    "terminated": True,
+                    "termination_reason": "backtest_timeout",
+                }
+
+            # Fetch full result
+            logger.debug("Fetching full backtest result", job_id=job_id)
+            result_response = await client.get_backtest_result(job_id)
+            result_data = result_response["result"]
+
+            # Combine job and result data
+            result = {
+                "job_id": job_id,
+                "strategy_id": state["current_strategy_id"],
+                "status": "COMPLETED",
+                "total_trades": result_data.get("total_trades", 0),
+                "profit_pct": result_data.get("profit_pct", 0.0),
+                "win_rate": result_data.get("win_rate", 0.0),
+                "max_drawdown_pct": result_data.get("max_drawdown_pct", 0.0),
+                "sharpe_ratio": result_data.get("sharpe_ratio", 0.0),
+                "sortino_ratio": result_data.get("sortino_ratio", 0.0),
+                "calmar_ratio": result_data.get("calmar_ratio", 0.0),
+                "profit_factor": result_data.get("profit_factor", 0.0),
+                "winning_trades": result_data.get("winning_trades", 0),
+                "losing_trades": result_data.get("losing_trades", 0),
+                "avg_trade_duration_minutes": result_data.get("avg_trade_duration_minutes", 0.0),
+                "avg_profit_per_trade": result_data.get("avg_profit_per_trade", 0.0),
+                "best_trade_pct": result_data.get("best_trade_pct", 0.0),
+                "worst_trade_pct": result_data.get("worst_trade_pct", 0.0),
+                "pair_results": result_data.get("pair_results", []),
+                "trades_json": result_data.get("trades_json", ""),
+            }
 
         logger.info(
-            "Backtest completed",
+            "Backtest result fetched",
             job_id=job_id,
             sharpe=result.get("sharpe_ratio"),
             profit_pct=result.get("profit_pct"),
@@ -314,6 +386,13 @@ async def wait_for_result_node(
             "current_result": result,
         }
 
+    except GrpcConnectionError as e:
+        logger.error("gRPC connection failed during polling", job_id=job_id, error=str(e))
+        return {
+            "errors": state["errors"] + [f"gRPC connection error: {str(e)}"],
+            "terminated": True,
+            "termination_reason": "grpc_connection_failed",
+        }
     except Exception as e:
         logger.exception("Failed to get backtest result", job_id=job_id, error=str(e))
         return {
@@ -572,16 +651,43 @@ async def complete_optimization_node(
             "best_max_drawdown": state["best_result"].get("max_drawdown_pct"),
         })
 
+    # Get final optimization run status from backend
+    try:
+        grpc_address = config.get("grpc_address", "localhost:50051") if config else "localhost:50051"
+
+        async with FreqSearchClient(grpc_address) as client:
+            # Get the final optimization run state
+            opt_run_data = await client.get_optimization_run(run_id)
+
+            logger.info(
+                "Retrieved final optimization run status",
+                run_id=run_id,
+                status=opt_run_data.get("run", {}).get("status"),
+            )
+
+            # Add backend status to summary
+            summary["backend_status"] = opt_run_data.get("run", {}).get("status")
+
+    except GrpcConnectionError as e:
+        logger.warning(
+            "Could not retrieve final optimization status from backend",
+            run_id=run_id,
+            error=str(e),
+        )
+        # Non-fatal: continue with completion
+    except Exception as e:
+        logger.warning(
+            "Error retrieving final optimization status",
+            run_id=run_id,
+            error=str(e),
+        )
+        # Non-fatal: continue with completion
+
     # Publish completion event
     await publish_event(
         "optimization.completed",
         summary,
     )
-
-    # In real implementation, would call gRPC to mark optimization complete:
-    # from ...grpc_client import FreqSearchClient
-    # client = FreqSearchClient("localhost:50051")
-    # await client.control_optimization(run_id, "complete")
 
     logger.info("Optimization completed successfully", **summary)
 
