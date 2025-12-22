@@ -300,7 +300,11 @@ func (r *strategyRepo) Search(ctx context.Context, query domain.StrategySearchQu
 		SELECT
 			id, name, code_hash, parent_id, generation, description,
 			timeframe, stoploss, trailing_stop, created_at, updated_at,
-			backtest_count, best_sharpe, best_profit_pct, best_drawdown, max_trades, avg_win_rate
+			backtest_count, best_sharpe,
+			COALESCE(best_profit_pct, 0) as best_profit_pct,
+			COALESCE(best_drawdown, 0) as best_drawdown,
+			COALESCE(max_trades, 0) as max_trades,
+			COALESCE(avg_win_rate, 0) as avg_win_rate
 		FROM strategy_metrics
 		ORDER BY %s %s NULLS LAST
 		LIMIT $%d OFFSET $%d

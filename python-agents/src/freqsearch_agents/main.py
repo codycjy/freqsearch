@@ -1,6 +1,8 @@
 """FreqSearch Agents CLI and entry points."""
 
+
 import asyncio
+import logging
 from typing import Optional, Any
 
 import typer
@@ -14,7 +16,11 @@ from .agents.engineer import run_engineer
 from .agents.analyst import run_analyst
 from .core.messaging import message_broker, Events, publish_event
 
-logger = structlog.get_logger(__name__)
+# Configure standard library logging level
+logging.basicConfig(
+    format="%(message)s",
+    level=logging.INFO,
+)
 
 # Configure structlog
 structlog.configure(
@@ -30,6 +36,8 @@ structlog.configure(
     logger_factory=structlog.stdlib.LoggerFactory(),
     cache_logger_on_first_use=True,
 )
+
+logger = structlog.get_logger(__name__)
 
 app = typer.Typer(
     name="freqsearch-agents",
@@ -233,10 +241,12 @@ def serve(
                     agent_tasks["engineer"] = None
 
             tasks.append(
-                broker.subscribe(
-                    Events.STRATEGY_NEEDS_PROCESSING,
-                    "engineer-queue",
-                    handle_strategy_needs_processing,
+                asyncio.create_task(
+                    broker.subscribe(
+                        Events.STRATEGY_NEEDS_PROCESSING,
+                        "engineer-queue",
+                        handle_strategy_needs_processing,
+                    )
                 )
             )
 
@@ -250,10 +260,12 @@ def serve(
                     agent_tasks["engineer"] = None
 
             tasks.append(
-                broker.subscribe(
-                    Events.STRATEGY_EVOLVE,
-                    "engineer-evolve-queue",
-                    handle_strategy_evolve,
+                asyncio.create_task(
+                    broker.subscribe(
+                        Events.STRATEGY_EVOLVE,
+                        "engineer-evolve-queue",
+                        handle_strategy_evolve,
+                    )
                 )
             )
 
@@ -270,10 +282,12 @@ def serve(
                     agent_tasks["analyst"] = None
 
             tasks.append(
-                broker.subscribe(
-                    Events.BACKTEST_COMPLETED,
-                    "analyst-queue",
-                    handle_backtest_completed,
+                asyncio.create_task(
+                    broker.subscribe(
+                        Events.BACKTEST_COMPLETED,
+                        "analyst-queue",
+                        handle_backtest_completed,
+                    )
                 )
             )
 
@@ -296,10 +310,12 @@ def serve(
                     agent_tasks["scout"] = None
 
             tasks.append(
-                broker.subscribe(
-                    Events.SCOUT_TRIGGER,
-                    "scout-trigger-queue",
-                    handle_scout_trigger,
+                asyncio.create_task(
+                    broker.subscribe(
+                        Events.SCOUT_TRIGGER,
+                        "scout-trigger-queue",
+                        handle_scout_trigger,
+                    )
                 )
             )
 

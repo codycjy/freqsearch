@@ -142,12 +142,26 @@ class MessageBroker:
         )
 
         # Start consuming
+        logger.info(
+            "Starting message consumer",
+            routing_key=routing_key,
+            queue=queue_name,
+        )
         async with queue.iterator() as queue_iter:
             async for message in queue_iter:
+                logger.info(
+                    "Received message",
+                    routing_key=message.routing_key,
+                    correlation_id=message.correlation_id,
+                )
                 async with message.process():
                     try:
                         body = json.loads(message.body.decode())
                         await handler(body)
+                        logger.info(
+                            "Message processed successfully",
+                            routing_key=message.routing_key,
+                        )
                     except Exception as e:
                         logger.error(
                             "Error processing message",

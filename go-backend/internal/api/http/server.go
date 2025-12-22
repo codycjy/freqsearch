@@ -4,16 +4,22 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/saltfish/freqsearch/go-backend/internal/db"
 	"github.com/saltfish/freqsearch/go-backend/internal/db/repository"
+	"github.com/saltfish/freqsearch/go-backend/internal/domain"
 	"github.com/saltfish/freqsearch/go-backend/internal/events"
 	"github.com/saltfish/freqsearch/go-backend/internal/scheduler"
+	"github.com/saltfish/freqsearch/go-backend/web"
 )
 
 // Server provides HTTP endpoints for health checks, metrics, REST API, and WebSocket.
@@ -63,6 +69,9 @@ func NewServer(
 		s.wsHub.ServeWS(w, r, logger)
 	})
 
+	// Serve embedded frontend files
+	s.setupFrontendRoutes(mux, logger)
+
 	// Wrap with CORS middleware
 	handler := corsMiddleware(mux)
 
@@ -80,6 +89,16 @@ func NewServer(
 // SetSubscriber sets the RabbitMQ subscriber for the server.
 func (s *Server) SetSubscriber(subscriber events.Subscriber) {
 	s.subscriber = subscriber
+}
+
+// SetEventPublisher sets the event publisher for the HTTP handler.
+func (s *Server) SetEventPublisher(publisher events.Publisher) {
+	s.handler.SetEventPublisher(publisher)
+}
+
+// SetScoutScheduler sets the scout scheduler for the HTTP handler.
+func (s *Server) SetScoutScheduler(scheduler ScoutSchedulerInterface) {
+	s.handler.SetScoutScheduler(scheduler)
 }
 
 // setupAPIRoutes configures REST API routes.
@@ -308,6 +327,54 @@ func (s *Server) setupAPIRoutes(mux *http.ServeMux) {
 	})
 }
 
+// setupFrontendRoutes configures routes for serving the embedded frontend.
+func (s *Server) setupFrontendRoutes(mux *http.ServeMux, logger *zap.Logger) {
+	frontendFS, err := web.GetFileSystem()
+	if err != nil {
+		logger.Warn("Failed to load embedded frontend files", zap.Error(err))
+		return
+	}
+
+	// Read index.html once for SPA fallback
+	indexHTML, err := fs.ReadFile(frontendFS, "index.html")
+	if err != nil {
+		logger.Warn("Failed to read index.html from embedded files", zap.Error(err))
+		return
+	}
+
+	// Create file server for static assets
+	fileServer := http.FileServer(http.FS(frontendFS))
+
+	// Serve static files and handle SPA routing
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Skip API, health, metrics, and WebSocket routes
+		if strings.HasPrefix(path, "/api/") ||
+			strings.HasPrefix(path, "/health") ||
+			strings.HasPrefix(path, "/metrics") {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Try to serve the file directly
+		if path != "/" {
+			// Check if file exists in embedded FS
+			cleanPath := strings.TrimPrefix(path, "/")
+			if _, err := fs.Stat(frontendFS, cleanPath); err == nil {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Serve index.html for SPA routing (fallback for client-side routes)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML)
+	})
+
+	logger.Info("Frontend routes configured with embedded files")
+}
+
 // corsMiddleware adds CORS headers for frontend access.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -407,6 +474,14 @@ func (s *Server) handleRabbitMQEvent(routingKey string, body []byte) error {
 		return s.handleAgentHeartbeat(body)
 	}
 
+	// Handle scout lifecycle events - update database
+	if err := s.handleScoutEvent(routingKey, body); err != nil {
+		s.logger.Error("Failed to handle scout event",
+			zap.String("routing_key", routingKey),
+			zap.Error(err))
+		// Continue to broadcast even if database update fails
+	}
+
 	// Map RabbitMQ routing key to WebSocket event type
 	eventType := mapRoutingKeyToEventType(routingKey)
 
@@ -418,6 +493,99 @@ func (s *Server) handleRabbitMQEvent(routingKey string, body []byte) error {
 
 	// Broadcast to WebSocket clients
 	s.wsHub.BroadcastEvent(eventType, eventData)
+
+	return nil
+}
+
+// handleScoutEvent processes scout lifecycle events and updates database.
+func (s *Server) handleScoutEvent(routingKey string, body []byte) error {
+	ctx := context.Background()
+
+	switch routingKey {
+	case events.RoutingKeyScoutStarted:
+		var event events.ScoutStartedEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			return fmt.Errorf("unmarshal scout started: %w", err)
+		}
+		s.logger.Info("Scout run started",
+			zap.String("run_id", event.RunID.String()),
+			zap.String("source", event.Source))
+		return s.handler.repos.Scout.UpdateRunStatus(ctx, event.RunID, domain.ScoutRunStatusRunning, nil)
+
+	case events.RoutingKeyScoutCompleted:
+		var event events.ScoutCompletedEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			return fmt.Errorf("unmarshal scout completed: %w", err)
+		}
+		s.logger.Info("Scout run completed",
+			zap.String("run_id", event.RunID.String()),
+			zap.Int("total_fetched", event.TotalFetched),
+			zap.Int("validated", event.Validated),
+			zap.Int("submitted", event.Submitted))
+		metrics := &domain.ScoutMetrics{
+			TotalFetched:      event.TotalFetched,
+			Validated:         event.Validated,
+			ValidationFailed:  event.ValidationFailed,
+			DuplicatesRemoved: event.DuplicatesRemoved,
+			Submitted:         event.Submitted,
+		}
+		return s.handler.repos.Scout.CompleteRun(ctx, event.RunID, metrics)
+
+	case events.RoutingKeyScoutFailed:
+		var event events.ScoutFailedEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			return fmt.Errorf("unmarshal scout failed: %w", err)
+		}
+		s.logger.Error("Scout run failed",
+			zap.String("run_id", event.RunID.String()),
+			zap.String("error", event.ErrorMessage),
+			zap.String("stage", event.Stage))
+		return s.handler.repos.Scout.FailRun(ctx, event.RunID, event.ErrorMessage)
+
+	case events.RoutingKeyScoutCancelled:
+		var event events.ScoutCancelledEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			return fmt.Errorf("unmarshal scout cancelled: %w", err)
+		}
+		s.logger.Info("Scout run cancelled", zap.String("run_id", event.RunID.String()))
+		return s.handler.repos.Scout.UpdateRunStatus(ctx, event.RunID, domain.ScoutRunStatusCancelled, nil)
+
+	case events.RoutingKeyStrategyDiscovered:
+		var event events.StrategyDiscoveredEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			return fmt.Errorf("unmarshal strategy discovered: %w", err)
+		}
+
+		// Create strategy from discovered event
+		strategy := &domain.Strategy{
+			ID:          uuid.New(),
+			Name:        event.Name,
+			Code:        event.Code,
+			Description: fmt.Sprintf("Discovered from %s", event.SourceType),
+			Timeframe:   event.Timeframe,
+			Stoploss:    event.Stoploss,
+			Indicators:  event.DetectedIndicators,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+
+		// Save to database
+		if err := s.handler.repos.Strategy.Create(ctx, strategy); err != nil {
+			if errors.Is(err, domain.ErrDuplicate) {
+				s.logger.Debug("Strategy already exists (duplicate code_hash)",
+					zap.String("name", event.Name),
+					zap.String("source", event.SourceType))
+				return nil // Not an error, just skip duplicates
+			}
+			return fmt.Errorf("create strategy: %w", err)
+		}
+
+		s.logger.Info("Strategy discovered and saved",
+			zap.String("id", strategy.ID.String()),
+			zap.String("name", strategy.Name),
+			zap.String("source", event.SourceType),
+			zap.String("code_hash", strategy.CodeHash))
+	}
 
 	return nil
 }

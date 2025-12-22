@@ -32,7 +32,7 @@ class RabbitMQSettings(BaseSettings):
     """RabbitMQ configuration."""
 
     url: str = Field("amqp://guest:guest@localhost:5672/", alias="RABBITMQ_URL")
-    exchange_name: str = "freqsearch"
+    exchange_name: str = "freqsearch.events"
     exchange_type: str = "topic"
     prefetch_count: int = 10
 

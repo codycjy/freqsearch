@@ -51,3 +51,66 @@ export interface BacktestJob {
     max_drawdown?: number;
   };
 }
+
+// Scout related types
+export type ScoutRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type ScoutTriggerType = 'manual' | 'scheduled' | 'event';
+
+export interface ScoutMetrics {
+  total_fetched: number;
+  validated: number;
+  validation_failed: number;
+  duplicates_removed: number;
+  submitted: number;
+}
+
+export interface ScoutRun {
+  id: string;
+  trigger_type: ScoutTriggerType;
+  triggered_by?: string;
+  source: string;
+  max_strategies: number;
+  status: ScoutRunStatus;
+  error_message?: string;
+  metrics?: ScoutMetrics;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface ScoutSchedule {
+  id: string;
+  name: string;
+  cron_expression: string;
+  source: string;
+  max_strategies: number;
+  enabled: boolean;
+  last_run_id?: string;
+  last_run_at?: string;
+  next_run_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TriggerScoutPayload {
+  source: string;
+  max_strategies?: number;
+  trigger_type?: ScoutTriggerType;
+  triggered_by?: string;
+}
+
+export interface CreateScoutSchedulePayload {
+  name: string;
+  cron_expression: string;
+  source: string;
+  max_strategies?: number;
+  enabled?: boolean;
+}
+
+export interface UpdateScoutSchedulePayload {
+  name?: string;
+  cron_expression?: string;
+  source?: string;
+  max_strategies?: number;
+  enabled?: boolean;
+}

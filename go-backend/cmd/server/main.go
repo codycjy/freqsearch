@@ -145,9 +145,34 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 	}
 	logger.Info("Scheduler started")
 
-	// 7. Start HTTP server (health/metrics + REST API)
+	// 7. Initialize event subscriber (RabbitMQ) for receiving events from Python agents
+	var eventSubscriber events.Subscriber
+	if cfg.GoBackend.RabbitMQ.URL != "" {
+		logger.Info("Initializing RabbitMQ subscriber...")
+		subscriber, err := events.NewRabbitMQSubscriber(
+			&cfg.GoBackend.RabbitMQ,
+			"go-backend-events",
+			logger,
+		)
+		if err != nil {
+			logger.Warn("Failed to create RabbitMQ subscriber, scout events will not be processed", zap.Error(err))
+		} else {
+			eventSubscriber = subscriber
+			defer subscriber.Close()
+			logger.Info("RabbitMQ subscriber created")
+		}
+	}
+
+	// 8. Start HTTP server (health/metrics + REST API)
 	httpAddr := fmt.Sprintf(":%d", cfg.GoBackend.HTTPPort)
 	httpServer := httpapi.NewServer(httpAddr, pool, repos, sched, logger)
+
+	// Set event publisher, scout scheduler, and subscriber for HTTP handlers
+	httpServer.SetEventPublisher(eventPublisher)
+	httpServer.SetScoutScheduler(scoutSched)
+	if eventSubscriber != nil {
+		httpServer.SetSubscriber(eventSubscriber)
+	}
 
 	go func() {
 		logger.Info("HTTP server starting", zap.String("address", httpAddr))
@@ -156,7 +181,7 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 		}
 	}()
 
-	// 8. Start gRPC server
+	// 9. Start gRPC server
 	grpcAddr := fmt.Sprintf(":%d", cfg.GoBackend.GRPCPort)
 	grpcServer := grpc.NewServer(repos, sched, logger)
 

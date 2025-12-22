@@ -14,6 +14,8 @@ import {
   ExperimentOutlined,
   RocketOutlined,
   RobotOutlined,
+  SearchOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons';
 
 import '@refinedev/antd/dist/reset.css';
@@ -24,6 +26,7 @@ import { StrategyList, StrategyShow, StrategyCreate, StrategyEdit } from '@resou
 import { BacktestList, BacktestShow, BacktestCreate } from '@resources/backtests';
 import { OptimizationList, OptimizationShow, OptimizationCreate } from '@resources/optimizations';
 import { AgentList, AgentShow } from '@resources/agents';
+import { ScoutList, ScoutShow, ScoutScheduleList } from '@resources/scout';
 
 function App() {
   return (
@@ -92,6 +95,32 @@ function App() {
                     icon: <RobotOutlined />,
                   },
                 },
+                {
+                  name: 'scout',
+                  meta: {
+                    label: 'Scout',
+                    icon: <SearchOutlined />,
+                  },
+                },
+                {
+                  name: 'scout-runs',
+                  list: '/scout/runs',
+                  show: '/scout/runs/:id',
+                  meta: {
+                    label: 'Runs',
+                    icon: <RocketOutlined />,
+                    parent: 'scout',
+                  },
+                },
+                {
+                  name: 'scout-schedules',
+                  list: '/scout/schedules',
+                  meta: {
+                    label: 'Schedules',
+                    icon: <ClockCircleOutlined />,
+                    parent: 'scout',
+                  },
+                },
               ]}
               options={{
                 syncWithLocation: true,
@@ -136,6 +165,15 @@ function App() {
                   <Route path="/agents">
                     <Route index element={<AgentList />} />
                     <Route path="show/:id" element={<AgentShow />} />
+                  </Route>
+
+                  {/* Scout */}
+                  <Route path="/scout">
+                    <Route path="runs">
+                      <Route index element={<ScoutList />} />
+                      <Route path=":id" element={<ScoutShow />} />
+                    </Route>
+                    <Route path="schedules" element={<ScoutScheduleList />} />
                   </Route>
 
                   <Route path="*" element={<NavigateToResource />} />

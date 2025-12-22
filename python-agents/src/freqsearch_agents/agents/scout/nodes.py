@@ -147,14 +147,22 @@ async def validate_strategies_node(
     parser = FreqtradeCodeParser()
     validated = []
     failed_count = 0
+    failed_strategies = []  # Track failed strategies for detailed logging
 
     for strategy in state["raw_strategies"]:
+        strategy_name = strategy.get("name", "unknown")
         code = strategy.get("code", "")
+
         if not code:
             failed_count += 1
+            failed_strategies.append({
+                "name": strategy_name,
+                "reason": "empty_code",
+                "error": "No code content",
+            })
             continue
 
-        result = parser.parse(code)
+        result = parser.parse(code, strategy_name=strategy_name)
 
         if result.is_valid and result.is_strategy:
             # Check if required methods are present
@@ -175,21 +183,54 @@ async def validate_strategies_node(
                     strategy["stoploss"] = result.stoploss
 
                 validated.append(strategy)
+                logger.debug("Strategy validated successfully", name=strategy_name)
             else:
-                logger.debug(
+                logger.warning(
                     "Strategy missing required methods",
-                    name=strategy.get("name"),
+                    name=strategy_name,
                     missing=result.required_methods_missing,
+                    methods_found=result.methods[:5],  # First 5 methods for context
                 )
                 failed_count += 1
+                failed_strategies.append({
+                    "name": strategy_name,
+                    "reason": "missing_methods",
+                    "error": f"Missing: {', '.join(result.required_methods_missing)}",
+                })
         else:
-            logger.debug(
-                "Strategy validation failed",
-                name=strategy.get("name"),
-                error=result.syntax_error,
-                is_strategy=result.is_strategy,
-            )
+            if result.syntax_error:
+                logger.warning(
+                    "Strategy has syntax error",
+                    name=strategy_name,
+                    error=result.syntax_error,
+                )
+                failed_strategies.append({
+                    "name": strategy_name,
+                    "reason": "syntax_error",
+                    "error": result.syntax_error,
+                })
+            elif not result.is_strategy:
+                logger.warning(
+                    "No IStrategy class found",
+                    name=strategy_name,
+                )
+                failed_strategies.append({
+                    "name": strategy_name,
+                    "reason": "no_istrategy",
+                    "error": "No class extending IStrategy found",
+                })
             failed_count += 1
+
+    # Log summary of failures
+    if failed_strategies:
+        logger.info(
+            "Validation failures summary",
+            total_failed=len(failed_strategies),
+            by_reason={
+                reason: len([f for f in failed_strategies if f["reason"] == reason])
+                for reason in set(f["reason"] for f in failed_strategies)
+            },
+        )
 
     logger.info(
         "Validation complete",

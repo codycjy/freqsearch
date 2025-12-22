@@ -2,12 +2,13 @@
  * Refine DataProvider for FreqSearch REST API
  *
  * Implements the Refine data provider interface to communicate with the FreqSearch backend.
- * Handles strategies, backtests, and optimization runs with full type safety.
+ * Handles strategies, backtests, optimization runs, and scout runs with full type safety.
  *
  * API Endpoints:
  * - Strategies: GET/POST/DELETE /api/v1/strategies
  * - Backtests: GET/POST/DELETE /api/v1/backtests
  * - Optimizations: GET/POST /api/v1/optimizations, POST /api/v1/optimizations/:id/control
+ * - Scout Runs: GET/DELETE /api/v1/agents/scout/runs
  *
  * @see https://refine.dev/docs/core/providers/data-provider/
  */
@@ -25,10 +26,10 @@ import type {
 /**
  * Type guard to check if a resource is a known resource type
  */
-type ResourceType = "strategies" | "backtests" | "optimizations" | "backtest-results";
+type ResourceType = "strategies" | "backtests" | "optimizations" | "backtest-results" | "scout-runs" | "scout-schedules";
 
 const isValidResource = (resource: string): resource is ResourceType => {
-  return ["strategies", "backtests", "optimizations", "backtest-results"].includes(resource);
+  return ["strategies", "backtests", "optimizations", "backtest-results", "scout-runs", "scout-schedules"].includes(resource);
 };
 
 /**
@@ -41,6 +42,8 @@ const getResourceEndpoint = (resource: string): string => {
     backtests: "/backtests",
     optimizations: "/optimizations",
     "backtest-results": "/backtest-results",
+    "scout-runs": "/agents/scout/runs",
+    "scout-schedules": "/agents/scout/schedules",
   };
 
   if (!isValidResource(resource)) {
@@ -134,6 +137,8 @@ const getListKey = (resource: string): string => {
     backtests: "backtests",
     optimizations: "runs",
     "backtest-results": "results",
+    "scout-runs": "runs",
+    "scout-schedules": "schedules",
   };
 
   return keys[resource] || resource;
@@ -177,13 +182,29 @@ export const dataProvider: DataProvider = {
   /**
    * Get a single resource by ID
    *
-   * API returns the item directly (not wrapped)
+   * API response format varies by resource:
+   * - scout-runs: { "run": {...} }
+   * - scout-schedules: { "schedule": {...} }
+   * - optimizations: { "run": {...}, "iterations": [...] }
+   * - others: direct object
    */
   getOne: async ({ resource, id, meta }) => {
     const endpoint = getResourceEndpoint(resource);
     const { data } = await axiosInstance.get(`${endpoint}/${id}`, {
       params: meta,
     });
+
+    // Unwrap nested responses based on resource type
+    if (resource === "scout-runs" && data.run) {
+      return { data: data.run };
+    }
+    if (resource === "scout-schedules" && data.schedule) {
+      return { data: data.schedule };
+    }
+    if (resource === "optimizations" && data.run) {
+      // For optimizations, include iterations in the run object
+      return { data: { ...data.run, iterations: data.iterations } };
+    }
 
     return { data };
   },

@@ -221,6 +221,8 @@ secrets.yaml
 # Go
 go-backend/bin/
 go-backend/vendor/
+go-backend/web/dist/
+!go-backend/web/dist/.gitkeep
 *.exe
 *.exe~
 *.dll

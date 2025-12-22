@@ -143,7 +143,7 @@ func (r *scoutRepo) UpdateRunStatus(
 ) error {
 	query := `
 		UPDATE scout_runs SET
-			status = $2,
+			status = $2::scout_run_status,
 			error_message = $3,
 			started_at = CASE
 				WHEN $2 = 'running' AND started_at IS NULL THEN NOW()

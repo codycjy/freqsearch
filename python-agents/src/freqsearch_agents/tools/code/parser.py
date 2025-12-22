@@ -10,6 +10,45 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+def preprocess_code(code: str) -> tuple[str, dict[str, str]]:
+    """Preprocess strategy code to fix common syntax issues.
+
+    Fixes:
+    - Class names starting with digits (e.g., '01_Strategy' -> 'Strategy_01')
+
+    Args:
+        code: Original Python source code
+
+    Returns:
+        Tuple of (preprocessed_code, rename_map)
+        rename_map maps original class names to fixed names
+    """
+    rename_map: dict[str, str] = {}
+
+    # Fix class names starting with digits
+    # Pattern: class <digit><rest>(...)
+    def fix_class_name(match: re.Match) -> str:
+        original_name = match.group(1)
+        rest = match.group(2)
+
+        # Extract leading digits and the rest
+        digit_match = re.match(r"^(\d+)_?(.*)$", original_name)
+        if digit_match:
+            digits = digit_match.group(1)
+            name_part = digit_match.group(2) or "Strategy"
+            # Create new name: name_part_digits or Strategy_digits
+            new_name = f"{name_part}_{digits}" if name_part else f"Strategy_{digits}"
+            rename_map[original_name] = new_name
+            return f"class {new_name}{rest}"
+        return match.group(0)
+
+    # Match class definitions with names starting with digits
+    pattern = r"class\s+(\d[a-zA-Z0-9_]*)(\s*\([^)]*\)\s*:)"
+    preprocessed = re.sub(pattern, fix_class_name, code)
+
+    return preprocessed, rename_map
+
+
 @dataclass
 class ParseResult:
     """Result of parsing a Freqtrade strategy."""
@@ -93,25 +132,40 @@ class FreqtradeCodeParser:
         "BooleanParameter",
     ]
 
-    def parse(self, code: str) -> ParseResult:
+    def parse(self, code: str, strategy_name: str | None = None) -> ParseResult:
         """Parse a Freqtrade strategy code string.
 
         Args:
             code: Python source code string
+            strategy_name: Optional name for logging purposes
 
         Returns:
             ParseResult with extracted information
         """
         result = ParseResult()
 
+        # Preprocess code to fix common issues (e.g., class names starting with digits)
+        preprocessed_code, rename_map = preprocess_code(code)
+        if rename_map:
+            logger.debug(
+                "Preprocessed strategy code",
+                strategy=strategy_name,
+                renames=rename_map,
+            )
+
         # Try to parse the AST
         try:
-            tree = ast.parse(code)
+            tree = ast.parse(preprocessed_code)
             result.is_valid = True
         except SyntaxError as e:
             result.is_valid = False
             result.syntax_error = f"Line {e.lineno}: {e.msg}"
-            logger.warning("Syntax error in strategy code", error=str(e))
+            logger.warning(
+                "Syntax error in strategy code",
+                strategy=strategy_name,
+                error=str(e),
+                line=e.lineno,
+            )
             return result
 
         # Extract class information
@@ -315,17 +369,20 @@ class FreqtradeCodeParser:
                 result.uses_deprecated_api = True
 
 
-def validate_strategy_code(code: str) -> tuple[bool, list[str]]:
+def validate_strategy_code(
+    code: str, strategy_name: str | None = None
+) -> tuple[bool, list[str]]:
     """Convenience function to validate strategy code.
 
     Args:
         code: Python source code
+        strategy_name: Optional name for logging purposes
 
     Returns:
         Tuple of (is_valid, list of error messages)
     """
     parser = FreqtradeCodeParser()
-    result = parser.parse(code)
+    result = parser.parse(code, strategy_name=strategy_name)
 
     errors = []
 

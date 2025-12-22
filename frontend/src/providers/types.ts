@@ -277,3 +277,43 @@ export interface BacktestResultListResponse {
   results: BacktestResultSummary[];
   pagination: PaginationResponse;
 }
+
+// ============================================================================
+// Scout Types
+// ============================================================================
+
+export type ScoutSource = "stratninja" | "github" | "freqai_gym";
+
+export interface ScoutSchedule {
+  id: string;
+  name: string;
+  cron_expression: string;
+  source: ScoutSource;
+  max_strategies: number;
+  enabled: boolean;
+  last_run_at?: string;
+  next_run_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateScoutSchedulePayload {
+  name: string;
+  cron_expression: string;
+  source: ScoutSource;
+  max_strategies?: number;
+  enabled?: boolean;
+}
+
+export interface UpdateScoutSchedulePayload {
+  name?: string;
+  cron_expression?: string;
+  source?: ScoutSource;
+  max_strategies?: number;
+  enabled?: boolean;
+}
+
+export interface ScoutScheduleListResponse {
+  schedules: ScoutSchedule[];
+  pagination: PaginationResponse;
+}
