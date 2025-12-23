@@ -205,6 +205,10 @@ export const dataProvider: DataProvider = {
       // For optimizations, include iterations in the run object
       return { data: { ...data.run, iterations: data.iterations } };
     }
+    if (resource === "backtests" && data.job) {
+      // For backtests, include result in the job object if available
+      return { data: { ...data.job, result: data.result } };
+    }
 
     return { data };
   },

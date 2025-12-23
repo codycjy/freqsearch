@@ -165,6 +165,38 @@ type TimeRange struct {
 	End   time.Time `json:"end"`
 }
 
+// BacktestJobQuery represents query parameters for backtest jobs.
+type BacktestJobQuery struct {
+	StrategyID        *uuid.UUID `json:"strategy_id,omitempty"`
+	OptimizationRunID *uuid.UUID `json:"optimization_run_id,omitempty"`
+	Status            *JobStatus `json:"status,omitempty"`
+	Page              int        `json:"page"`
+	PageSize          int        `json:"page_size"`
+	OrderBy           string     `json:"order_by,omitempty"` // "created_at", "priority", "started_at"
+	Ascending         bool       `json:"ascending,omitempty"`
+}
+
+// SetDefaults sets default values for the query.
+func (q *BacktestJobQuery) SetDefaults() {
+	if q.OrderBy == "" {
+		q.OrderBy = "created_at"
+	}
+	if q.Page <= 0 {
+		q.Page = 1
+	}
+	if q.PageSize <= 0 {
+		q.PageSize = 20
+	}
+	if q.PageSize > 100 {
+		q.PageSize = 100
+	}
+}
+
+// Offset returns the offset for pagination.
+func (q *BacktestJobQuery) Offset() int {
+	return (q.Page - 1) * q.PageSize
+}
+
 // QueueStats represents statistics about the backtest job queue.
 type QueueStats struct {
 	PendingJobs    int   `json:"pending_jobs"`

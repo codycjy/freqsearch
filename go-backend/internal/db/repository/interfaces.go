@@ -83,6 +83,9 @@ type BacktestJobRepository interface {
 	// GetByOptimizationRunID retrieves jobs for an optimization run.
 	GetByOptimizationRunID(ctx context.Context, runID uuid.UUID) ([]*domain.BacktestJob, error)
 
+	// Query queries backtest jobs with filters and pagination.
+	Query(ctx context.Context, query *domain.BacktestJobQuery) ([]*domain.BacktestJob, *domain.PaginationResponse, error)
+
 	// GetQueueStats retrieves queue statistics.
 	GetQueueStats(ctx context.Context) (*domain.QueueStats, error)
 

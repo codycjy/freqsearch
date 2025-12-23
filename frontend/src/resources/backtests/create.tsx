@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useCreate, useNavigation, useList } from '@refinedev/core';
+import { useSearchParams } from 'react-router-dom';
 import { Create } from '@refinedev/antd';
 import {
   Form,
@@ -18,7 +19,7 @@ import {
   InfoCircleOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
-import type { CreateBacktestPayload, BacktestConfig, Strategy } from '@providers/types';
+import type { CreateBacktestPayload, BacktestConfig, StrategyWithMetrics } from '@providers/types';
 import dayjs, { Dayjs } from 'dayjs';
 
 const { Text, Paragraph } = Typography;
@@ -137,13 +138,17 @@ export const BacktestCreate: React.FC = () => {
   const [form] = Form.useForm();
   const { mutate, isLoading } = useCreate<CreateBacktestPayload>();
   const { push } = useNavigation();
+  const [searchParams] = useSearchParams();
 
   const [selectedPairs, setSelectedPairs] = useState<string[]>([]);
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>('');
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
 
+  // Get strategy_id from URL params (when coming from strategy page)
+  const strategyIdFromUrl = searchParams.get('strategy_id');
+
   // Fetch available strategies
-  const { data: strategiesData, isLoading: strategiesLoading } = useList<Strategy>({
+  const { data: strategiesData, isLoading: strategiesLoading } = useList<StrategyWithMetrics>({
     resource: 'strategies',
     pagination: {
       pageSize: 100,
@@ -151,6 +156,13 @@ export const BacktestCreate: React.FC = () => {
   });
 
   const strategies = strategiesData?.data || [];
+
+  // Set strategy_id from URL params when available
+  useEffect(() => {
+    if (strategyIdFromUrl) {
+      form.setFieldsValue({ strategy_id: strategyIdFromUrl });
+    }
+  }, [strategyIdFromUrl, form]);
 
   const handleSubmit = (values: any) => {
     const config: BacktestConfig = {
@@ -191,6 +203,7 @@ export const BacktestCreate: React.FC = () => {
       isLoading={isLoading}
       saveButtonProps={{
         loading: isLoading,
+        onClick: () => form.submit(),
       }}
     >
       <Form
@@ -231,9 +244,9 @@ export const BacktestCreate: React.FC = () => {
                 filterOption={(input, option) =>
                   (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                 }
-                options={strategies.map((strategy) => ({
-                  label: `${strategy.name} (${strategy.id.slice(0, 8)})`,
-                  value: strategy.id,
+                options={strategies.map((item) => ({
+                  label: `${item.strategy.name} (${item.strategy.id.slice(0, 8)})`,
+                  value: item.strategy.id,
                 }))}
               />
             </Form.Item>

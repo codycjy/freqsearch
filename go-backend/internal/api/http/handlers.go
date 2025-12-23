@@ -399,7 +399,8 @@ func (h *Handler) HandleSubmitBacktest(w http.ResponseWriter, r *http.Request) {
 
 // GetBacktestJobResponse represents the response for getting a backtest job.
 type GetBacktestJobResponse struct {
-	Job *domain.BacktestJob `json:"job"`
+	Job    *domain.BacktestJob    `json:"job"`
+	Result *domain.BacktestResult `json:"result,omitempty"`
 }
 
 // HandleGetBacktestJob retrieves a backtest job by ID.
@@ -427,7 +428,20 @@ func (h *Handler) HandleGetBacktestJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, GetBacktestJobResponse{Job: job})
+	response := GetBacktestJobResponse{Job: job}
+
+	// If job is completed, also fetch the result
+	if job.Status == domain.JobStatusCompleted {
+		result, err := h.repos.Result.GetByJobID(r.Context(), id)
+		if err != nil && !errors.Is(err, domain.ErrNotFound) {
+			h.logger.Warn("Failed to get backtest result for completed job", zap.Error(err), zap.String("job_id", id.String()))
+		}
+		if result != nil {
+			response.Result = result
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 // HandleCancelBacktest cancels a backtest job.
@@ -560,6 +574,72 @@ func (h *Handler) HandleQueryBacktestResults(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, QueryBacktestResultsResponse{
 		Results:    results,
 		Pagination: pagination,
+	})
+}
+
+// ListBacktestJobsResponse represents the response for listing backtest jobs.
+type ListBacktestJobsResponse struct {
+	Backtests  []*domain.BacktestJob     `json:"backtests"`
+	Pagination domain.PaginationResponse `json:"pagination"`
+}
+
+// HandleListBacktestJobs lists backtest jobs with filters and pagination.
+func (h *Handler) HandleListBacktestJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"), "")
+		return
+	}
+
+	query := &domain.BacktestJobQuery{
+		Page:     1,
+		PageSize: 20,
+	}
+
+	// Parse query parameters
+	queryParams := r.URL.Query()
+	if strategyID := queryParams.Get("strategy_id"); strategyID != "" {
+		if id, err := parseUUID(strategyID); err == nil {
+			query.StrategyID = &id
+		}
+	}
+	if optRunID := queryParams.Get("optimization_run_id"); optRunID != "" {
+		if id, err := parseUUID(optRunID); err == nil {
+			query.OptimizationRunID = &id
+		}
+	}
+	if status := queryParams.Get("status"); status != "" {
+		jobStatus := domain.JobStatusFromString(status)
+		query.Status = &jobStatus
+	}
+	if orderBy := queryParams.Get("order_by"); orderBy != "" {
+		query.OrderBy = orderBy
+	}
+	if ascending := queryParams.Get("ascending"); ascending == "true" {
+		query.Ascending = true
+	}
+	if page := queryParams.Get("page"); page != "" {
+		if val, err := strconv.Atoi(page); err == nil {
+			query.Page = val
+		}
+	}
+	if pageSize := queryParams.Get("page_size"); pageSize != "" {
+		if val, err := strconv.Atoi(pageSize); err == nil {
+			query.PageSize = val
+		}
+	}
+
+	query.SetDefaults()
+
+	jobs, pagination, err := h.repos.BacktestJob.Query(r.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to query backtest jobs", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, err, "failed to query backtest jobs")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ListBacktestJobsResponse{
+		Backtests:  jobs,
+		Pagination: *pagination,
 	})
 }
 

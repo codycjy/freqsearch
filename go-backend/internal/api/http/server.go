@@ -153,7 +153,7 @@ func (s *Server) setupAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/backtests", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			s.handler.HandleQueryBacktestResults(w, r)
+			s.handler.HandleListBacktestJobs(w, r)
 		case http.MethodPost:
 			s.handler.HandleSubmitBacktest(w, r)
 		default:
@@ -186,7 +186,7 @@ func (s *Server) setupAPIRoutes(mux *http.ServeMux) {
 		// Collection endpoint
 		switch r.Method {
 		case http.MethodGet:
-			s.handler.HandleQueryBacktestResults(w, r)
+			s.handler.HandleListBacktestJobs(w, r)
 		case http.MethodPost:
 			s.handler.HandleSubmitBacktest(w, r)
 		default:

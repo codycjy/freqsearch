@@ -420,6 +420,99 @@ func (r *backtestJobRepo) GetByOptimizationRunID(ctx context.Context, runID uuid
 	return r.scanJobs(rows)
 }
 
+// Query queries backtest jobs with filters and pagination.
+func (r *backtestJobRepo) Query(ctx context.Context, query *domain.BacktestJobQuery) ([]*domain.BacktestJob, *domain.PaginationResponse, error) {
+	query.SetDefaults()
+
+	// Build WHERE clause
+	whereClause := ""
+	args := []interface{}{}
+	argCount := 0
+
+	if query.StrategyID != nil {
+		argCount++
+		whereClause = fmt.Sprintf("WHERE strategy_id = $%d", argCount)
+		args = append(args, *query.StrategyID)
+	}
+
+	if query.OptimizationRunID != nil {
+		argCount++
+		if whereClause == "" {
+			whereClause = fmt.Sprintf("WHERE optimization_run_id = $%d", argCount)
+		} else {
+			whereClause += fmt.Sprintf(" AND optimization_run_id = $%d", argCount)
+		}
+		args = append(args, *query.OptimizationRunID)
+	}
+
+	if query.Status != nil {
+		argCount++
+		if whereClause == "" {
+			whereClause = fmt.Sprintf("WHERE status = $%d", argCount)
+		} else {
+			whereClause += fmt.Sprintf(" AND status = $%d", argCount)
+		}
+		args = append(args, query.Status.String())
+	}
+
+	// Get total count
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM backtest_jobs %s", whereClause)
+	var totalCount int
+	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
+		return nil, nil, fmt.Errorf("failed to count jobs: %w", err)
+	}
+
+	// Build ORDER BY clause
+	orderDirection := "DESC"
+	if query.Ascending {
+		orderDirection = "ASC"
+	}
+
+	orderColumn := "created_at"
+	switch query.OrderBy {
+	case "priority":
+		orderColumn = "priority"
+	case "started_at":
+		orderColumn = "started_at"
+	case "created_at":
+		orderColumn = "created_at"
+	}
+
+	orderClause := fmt.Sprintf("ORDER BY %s %s", orderColumn, orderDirection)
+
+	// Add pagination
+	argCount++
+	limitArg := argCount
+	argCount++
+	offsetArg := argCount
+	args = append(args, query.PageSize, query.Offset())
+
+	// Build and execute main query
+	selectQuery := fmt.Sprintf(`
+		SELECT
+			id, strategy_id, optimization_run_id, config, priority, status,
+			container_id, error_message, retry_count, created_at, started_at, completed_at
+		FROM backtest_jobs
+		%s
+		%s
+		LIMIT $%d OFFSET $%d
+	`, whereClause, orderClause, limitArg, offsetArg)
+
+	rows, err := r.pool.Query(ctx, selectQuery, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query jobs: %w", err)
+	}
+	defer rows.Close()
+
+	jobs, err := r.scanJobs(rows)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pagination := domain.NewPaginationResponse(totalCount, query.Page, query.PageSize)
+	return jobs, &pagination, nil
+}
+
 // GetQueueStats retrieves queue statistics.
 func (r *backtestJobRepo) GetQueueStats(ctx context.Context) (*domain.QueueStats, error) {
 	query := `

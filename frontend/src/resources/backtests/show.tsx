@@ -1,5 +1,5 @@
 import React from 'react';
-import { useShow, useNavigation, useOne } from '@refinedev/core';
+import { useShow, useNavigation } from '@refinedev/core';
 import { Show, DateField } from '@refinedev/antd';
 import {
   Card,
@@ -87,28 +87,21 @@ const parseTrades = (tradesJson?: string): any[] => {
  * - Trade list
  * - Configuration details
  */
+// Extended type that includes result from the API response
+interface BacktestJobWithResult extends BacktestJob {
+  result?: BacktestResult;
+}
+
 export const BacktestShow: React.FC = () => {
   const { show: showResource } = useNavigation();
-  const { queryResult } = useShow<BacktestJob>({
+  const { queryResult } = useShow<BacktestJobWithResult>({
     liveMode: 'auto', // Enable real-time updates
   });
 
-  const { data: jobData, isLoading: jobLoading } = queryResult;
+  const { data: jobData, isLoading } = queryResult;
   const job = jobData?.data;
-
-  // Fetch backtest result if job is completed
-  const { data: resultData, isLoading: resultLoading } = useOne<BacktestResult>({
-    resource: 'backtests/results',
-    id: job?.id || '',
-    queryOptions: {
-      enabled: !!job?.id && job?.status === 'JOB_STATUS_COMPLETED',
-    },
-  });
-
-  const result = resultData?.data;
+  const result = job?.result;
   const trades = parseTrades(result?.trades_json);
-
-  const isLoading = jobLoading || resultLoading;
 
   return (
     <Show isLoading={isLoading}>
