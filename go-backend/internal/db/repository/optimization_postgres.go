@@ -248,14 +248,26 @@ func (r *optimizationRepo) UpdateStatus(
 	id uuid.UUID,
 	status domain.OptimizationStatus,
 ) error {
-	query := `
-		UPDATE optimization_runs SET
-			status = $2,
-			completed_at = CASE WHEN $2 IN ('completed', 'failed', 'cancelled') THEN NOW() ELSE completed_at END
-		WHERE id = $1
-	`
+	statusStr := status.String()
 
-	result, err := r.pool.Exec(ctx, query, id, status.String())
+	// For terminal statuses, also set completed_at
+	var query string
+	if status.IsTerminal() {
+		query = `
+			UPDATE optimization_runs SET
+				status = $2,
+				completed_at = NOW()
+			WHERE id = $1
+		`
+	} else {
+		query = `
+			UPDATE optimization_runs SET
+				status = $2
+			WHERE id = $1
+		`
+	}
+
+	result, err := r.pool.Exec(ctx, query, id, statusStr)
 	if err != nil {
 		return fmt.Errorf("failed to update optimization status: %w", err)
 	}
@@ -573,6 +585,7 @@ func (r *optimizationRepo) scanRun(row pgx.Row) (*domain.OptimizationRun, error)
 	var modeStr, statusStr string
 	var minSharpe, minProfitPct, maxDrawdownPct, minWinRate *float64
 	var minTrades *int
+	var terminationReason *string
 
 	err := row.Scan(
 		&run.ID,
@@ -590,7 +603,7 @@ func (r *optimizationRepo) scanRun(row pgx.Row) (*domain.OptimizationRun, error)
 		&run.MaxIterations,
 		&run.BestStrategyID,
 		&run.BestResultID,
-		&run.TerminationReason,
+		&terminationReason,
 		&run.CreatedAt,
 		&run.UpdatedAt,
 		&run.CompletedAt,
@@ -626,6 +639,9 @@ func (r *optimizationRepo) scanRun(row pgx.Row) (*domain.OptimizationRun, error)
 	if minWinRate != nil {
 		run.Criteria.MinWinRate = *minWinRate
 	}
+	if terminationReason != nil {
+		run.TerminationReason = *terminationReason
+	}
 
 	return run, nil
 }
@@ -640,6 +656,7 @@ func (r *optimizationRepo) scanRuns(rows pgx.Rows) ([]*domain.OptimizationRun, e
 		var modeStr, statusStr string
 		var minSharpe, minProfitPct, maxDrawdownPct, minWinRate *float64
 		var minTrades *int
+		var terminationReason *string
 
 		err := rows.Scan(
 			&run.ID,
@@ -657,7 +674,7 @@ func (r *optimizationRepo) scanRuns(rows pgx.Rows) ([]*domain.OptimizationRun, e
 			&run.MaxIterations,
 			&run.BestStrategyID,
 			&run.BestResultID,
-			&run.TerminationReason,
+			&terminationReason,
 			&run.CreatedAt,
 			&run.UpdatedAt,
 			&run.CompletedAt,
@@ -688,6 +705,9 @@ func (r *optimizationRepo) scanRuns(rows pgx.Rows) ([]*domain.OptimizationRun, e
 		}
 		if minWinRate != nil {
 			run.Criteria.MinWinRate = *minWinRate
+		}
+		if terminationReason != nil {
+			run.TerminationReason = *terminationReason
 		}
 
 		runs = append(runs, run)

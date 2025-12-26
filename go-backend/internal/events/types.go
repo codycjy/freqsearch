@@ -17,15 +17,21 @@ const (
 	RoutingKeyTaskCompleted = "task.completed"
 	RoutingKeyTaskFailed    = "task.failed"
 	RoutingKeyTaskCancelled = "task.cancelled"
-	RoutingKeyOptIteration  = "optimization.iteration"
+
+	// Optimization lifecycle events
+	RoutingKeyOptStarted       = "optimization.started"
+	RoutingKeyOptIteration     = "optimization.iteration"
+	RoutingKeyOptCompleted     = "optimization.completed"
+	RoutingKeyOptFailed        = "optimization.failed"
+	RoutingKeyOptStatusChanged = "optimization.status_changed"
 
 	// Strategy lifecycle events (for Python Agents)
-	RoutingKeyStrategyDiscovered      = "strategy.discovered"
-	RoutingKeyStrategyNeedsProcessing = "strategy.needs_processing"
+	RoutingKeyStrategyDiscovered       = "strategy.discovered"
+	RoutingKeyStrategyNeedsProcessing  = "strategy.needs_processing"
 	RoutingKeyStrategyReadyForBacktest = "strategy.ready_for_backtest"
-	RoutingKeyStrategyApproved        = "strategy.approved"
-	RoutingKeyStrategyEvolve          = "strategy.evolve"
-	RoutingKeyStrategyArchived        = "strategy.archived"
+	RoutingKeyStrategyApproved         = "strategy.approved"
+	RoutingKeyStrategyEvolve           = "strategy.evolve"
+	RoutingKeyStrategyArchived         = "strategy.archived"
 
 	// Backtest events (bridging Go backend and Python agents)
 	RoutingKeyBacktestCompleted = "backtest.completed"
@@ -51,7 +57,13 @@ const (
 	EventTypeTaskCompleted = "task.completed"
 	EventTypeTaskFailed    = "task.failed"
 	EventTypeTaskCancelled = "task.cancelled"
-	EventTypeOptIteration  = "optimization.iteration"
+
+	// Optimization events
+	EventTypeOptStarted       = "optimization.started"
+	EventTypeOptIteration     = "optimization.iteration"
+	EventTypeOptCompleted     = "optimization.completed"
+	EventTypeOptFailed        = "optimization.failed"
+	EventTypeOptStatusChanged = "optimization.status_changed"
 
 	// Strategy events
 	EventTypeStrategyDiscovered       = "strategy.discovered"
@@ -287,17 +299,17 @@ type StrategyReadyForBacktestEvent struct {
 // This is separate from TaskCompletedEvent to allow different routing.
 type BacktestCompletedBridgeEvent struct {
 	BaseEvent
-	JobID           uuid.UUID `json:"job_id"`
-	StrategyID      uuid.UUID `json:"strategy_id"`
-	StrategyName    string    `json:"strategy_name"`
-	Success         bool      `json:"success"`
-	ErrorMessage    string    `json:"error_message,omitempty"`
-	TotalTrades     *int      `json:"total_trades,omitempty"`
-	ProfitPct       *float64  `json:"profit_pct,omitempty"`
-	WinRate         *float64  `json:"win_rate,omitempty"`
-	MaxDrawdownPct  *float64  `json:"max_drawdown_pct,omitempty"`
-	SharpeRatio     *float64  `json:"sharpe_ratio,omitempty"`
-	ResultID        *uuid.UUID `json:"result_id,omitempty"`
+	JobID          uuid.UUID  `json:"job_id"`
+	StrategyID     uuid.UUID  `json:"strategy_id"`
+	StrategyName   string     `json:"strategy_name"`
+	Success        bool       `json:"success"`
+	ErrorMessage   string     `json:"error_message,omitempty"`
+	TotalTrades    *int       `json:"total_trades,omitempty"`
+	ProfitPct      *float64   `json:"profit_pct,omitempty"`
+	WinRate        *float64   `json:"win_rate,omitempty"`
+	MaxDrawdownPct *float64   `json:"max_drawdown_pct,omitempty"`
+	SharpeRatio    *float64   `json:"sharpe_ratio,omitempty"`
+	ResultID       *uuid.UUID `json:"result_id,omitempty"`
 }
 
 // NewBacktestCompletedBridgeEvent creates a BacktestCompletedBridgeEvent from job and result.
@@ -379,10 +391,10 @@ type StrategyArchivedEvent struct {
 type ScoutTriggerEvent struct {
 	BaseEvent
 	RunID         uuid.UUID `json:"run_id"`
-	Source        string    `json:"source"`        // "stratninja", "github", etc.
+	Source        string    `json:"source"`         // "stratninja", "github", etc.
 	MaxStrategies int       `json:"max_strategies"` // Maximum strategies to fetch
-	TriggerType   string    `json:"trigger_type"`  // "manual", "scheduled"
-	TriggeredBy   string    `json:"triggered_by"`  // User ID or "system"
+	TriggerType   string    `json:"trigger_type"`   // "manual", "scheduled"
+	TriggeredBy   string    `json:"triggered_by"`   // User ID or "system"
 }
 
 // NewScoutTriggerEvent creates a new ScoutTriggerEvent.
@@ -417,8 +429,8 @@ func NewScoutStartedEvent(run *domain.ScoutRun) *ScoutStartedEvent {
 type ScoutProgressEvent struct {
 	BaseEvent
 	RunID        uuid.UUID      `json:"run_id"`
-	Stage        string         `json:"stage"`         // "fetching", "validating", "submitting"
-	Progress     int            `json:"progress"`      // 0-100
+	Stage        string         `json:"stage"`    // "fetching", "validating", "submitting"
+	Progress     int            `json:"progress"` // 0-100
 	Message      string         `json:"message"`
 	StageMetrics map[string]int `json:"stage_metrics,omitempty"`
 }
@@ -498,5 +510,99 @@ func NewScoutCancelledEvent(runID uuid.UUID) *ScoutCancelledEvent {
 	return &ScoutCancelledEvent{
 		BaseEvent: NewBaseEvent(EventTypeScoutCancelled),
 		RunID:     runID,
+	}
+}
+
+// =============================================================================
+// Optimization Lifecycle Events
+// =============================================================================
+
+// OptimizationStartedEvent is published when an optimization run starts.
+type OptimizationStartedEvent struct {
+	BaseEvent
+	OptimizationRunID uuid.UUID                  `json:"optimization_run_id"`
+	Name              string                     `json:"name"`
+	BaseStrategyID    uuid.UUID                  `json:"base_strategy_id"`
+	MaxIterations     int                        `json:"max_iterations"`
+	Mode              string                     `json:"mode"`
+	Config            *domain.OptimizationConfig `json:"config,omitempty"`
+}
+
+// NewOptimizationStartedEvent creates a new OptimizationStartedEvent.
+func NewOptimizationStartedEvent(run *domain.OptimizationRun) *OptimizationStartedEvent {
+	return &OptimizationStartedEvent{
+		BaseEvent:         NewBaseEvent(EventTypeOptStarted),
+		OptimizationRunID: run.ID,
+		Name:              run.Name,
+		BaseStrategyID:    run.BaseStrategyID,
+		MaxIterations:     run.MaxIterations,
+		Mode:              run.Mode.String(),
+		Config:            &run.Config,
+	}
+}
+
+// OptimizationCompletedEvent is published when an optimization run completes successfully.
+type OptimizationCompletedEvent struct {
+	BaseEvent
+	RunID             uuid.UUID  `json:"run_id"`
+	Name              string     `json:"name"`
+	TotalIterations   int        `json:"total_iterations"`
+	BestStrategyID    *uuid.UUID `json:"best_strategy_id,omitempty"`
+	BestResultID      *uuid.UUID `json:"best_result_id,omitempty"`
+	TerminationReason string     `json:"termination_reason,omitempty"`
+	DurationSeconds   int64      `json:"duration_seconds"`
+}
+
+// NewOptimizationCompletedEvent creates a new OptimizationCompletedEvent.
+func NewOptimizationCompletedEvent(run *domain.OptimizationRun) *OptimizationCompletedEvent {
+	return &OptimizationCompletedEvent{
+		BaseEvent:         NewBaseEvent(EventTypeOptCompleted),
+		RunID:             run.ID,
+		Name:              run.Name,
+		TotalIterations:   run.CurrentIteration,
+		BestStrategyID:    run.BestStrategyID,
+		BestResultID:      run.BestResultID,
+		TerminationReason: run.TerminationReason,
+		DurationSeconds:   int64(run.Duration().Seconds()),
+	}
+}
+
+// OptimizationFailedEvent is published when an optimization run fails.
+type OptimizationFailedEvent struct {
+	BaseEvent
+	RunID             uuid.UUID `json:"run_id"`
+	Name              string    `json:"name"`
+	ErrorMessage      string    `json:"error_message"`
+	FailedAtIteration int       `json:"failed_at_iteration"`
+}
+
+// NewOptimizationFailedEvent creates a new OptimizationFailedEvent.
+func NewOptimizationFailedEvent(run *domain.OptimizationRun, reason string) *OptimizationFailedEvent {
+	return &OptimizationFailedEvent{
+		BaseEvent:         NewBaseEvent(EventTypeOptFailed),
+		RunID:             run.ID,
+		Name:              run.Name,
+		ErrorMessage:      reason,
+		FailedAtIteration: run.CurrentIteration,
+	}
+}
+
+// OptimizationStatusChangedEvent is published when an optimization run status changes.
+type OptimizationStatusChangedEvent struct {
+	BaseEvent
+	RunID     uuid.UUID `json:"run_id"`
+	Name      string    `json:"name"`
+	OldStatus string    `json:"old_status"`
+	NewStatus string    `json:"new_status"`
+}
+
+// NewOptimizationStatusChangedEvent creates a new OptimizationStatusChangedEvent.
+func NewOptimizationStatusChangedEvent(run *domain.OptimizationRun, oldStatus, newStatus string) *OptimizationStatusChangedEvent {
+	return &OptimizationStatusChangedEvent{
+		BaseEvent: NewBaseEvent(EventTypeOptStatusChanged),
+		RunID:     run.ID,
+		Name:      run.Name,
+		OldStatus: oldStatus,
+		NewStatus: newStatus,
 	}
 }

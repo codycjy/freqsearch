@@ -5,12 +5,13 @@ from typing import Any
 
 import structlog
 
-from ...core.state import OrchestratorState
-from ...core.messaging import publish_event, Events
-from ...agents.engineer.agent import run_engineer
 from ...agents.analyst.agent import run_analyst
+from ...agents.engineer.agent import run_engineer
+from ...core.messaging import Events, publish_event
+from ...core.state import OrchestratorState
+from ...grpc_client.client import BacktestConfig, FreqSearchClient
+from ...grpc_client.client import ConnectionError as GrpcConnectionError
 from ...schemas.diagnosis import DiagnosisStatus
-from ...grpc_client.client import FreqSearchClient, BacktestConfig, ConnectionError as GrpcConnectionError
 
 logger = structlog.get_logger(__name__)
 
@@ -22,6 +23,7 @@ async def initialize_run_node(
     """Initialize optimization run and load configuration.
 
     Sets up initial state for the optimization loop.
+    Fetches base strategy code from backend.
 
     Args:
         state: Current orchestrator state
@@ -40,9 +42,23 @@ async def initialize_run_node(
         max_iterations=state["max_iterations"],
     )
 
+    # Get gRPC config - check state first, then config, then default
+    opt_config = state.get("optimization_config", {})
+    grpc_address = opt_config.get("grpc_address", "localhost:50051")
+    if config and "grpc_address" in config:
+        grpc_address = config["grpc_address"]
+
+    # Set optimization status to RUNNING
+    try:
+        async with FreqSearchClient(grpc_address) as client:
+            await client.control_optimization(run_id, "resume")
+            logger.info("Set optimization status to RUNNING", run_id=run_id)
+    except Exception as e:
+        logger.warning("Failed to set optimization status to RUNNING", run_id=run_id, error=str(e))
+
     # Publish initialization event
     await publish_event(
-        "optimization.iteration.started",
+        Events.OPTIMIZATION_ITERATION_STARTED,
         {
             "optimization_run_id": run_id,
             "base_strategy_id": base_strategy_id,
@@ -66,7 +82,7 @@ async def invoke_engineer_node(
     """Invoke Engineer Agent to generate or evolve strategy code.
 
     Calls the Engineer Agent with current context:
-    - First iteration: process base strategy
+    - First iteration: process base strategy (fetches real code from backend)
     - Subsequent iterations: evolve based on analyst feedback
 
     Args:
@@ -86,14 +102,41 @@ async def invoke_engineer_node(
     )
 
     try:
+        # Get gRPC configuration
+        grpc_address = config.get("grpc_address", "localhost:50051") if config else "localhost:50051"
+
         # Prepare engineer input
         if iteration == 0:
-            # First iteration: process base strategy
-            # In real implementation, fetch strategy data from backend
+            # First iteration: fetch and process base strategy from backend
+            logger.debug("Fetching base strategy from backend", strategy_id=state["base_strategy_id"])
+
+            async with FreqSearchClient(grpc_address) as client:
+                try:
+                    strategy_response = await client.get_strategy(state["base_strategy_id"])
+                    strategy_data = strategy_response.get("strategy", {})
+                    base_strategy_code = strategy_data.get("code", "")
+                    base_strategy_name = strategy_data.get("name", f"strategy_{state['base_strategy_id']}")
+
+                    logger.info(
+                        "Base strategy fetched successfully",
+                        strategy_id=state["base_strategy_id"],
+                        name=base_strategy_name,
+                        code_length=len(base_strategy_code),
+                    )
+                except Exception as e:
+                    logger.error("Failed to fetch base strategy", strategy_id=state["base_strategy_id"], error=str(e))
+                    return {
+                        **state,
+                        "status": "failed",
+                        "errors": state["errors"] + [f"Failed to fetch base strategy: {e}"],
+                        "terminated": True,
+                        "termination_reason": "base_strategy_fetch_failed",
+                    }
+
             engineer_input = {
                 "id": state["base_strategy_id"],
-                "name": f"strategy_{state['base_strategy_id']}",
-                "code": "# Base strategy code from backend",
+                "name": base_strategy_name,
+                "code": base_strategy_code,  # Real code from backend
             }
             mode = "new"
         else:
@@ -106,10 +149,18 @@ async def invoke_engineer_node(
                     "termination_reason": "missing_feedback",
                 }
 
+            # Get code from current_result or fall back to previous engineer_result
+            previous_code = ""
+            if state.get("current_result") and state["current_result"].get("strategy_code"):
+                previous_code = state["current_result"]["strategy_code"]
+            elif state.get("engineer_result"):
+                # Fall back to engineer's generated code (useful when backtest failed)
+                previous_code = state["engineer_result"].get("generated_code", "") or state["engineer_result"].get("code", "")
+
             engineer_input = {
                 "id": state["current_strategy_id"],
                 "name": f"strategy_{state['current_strategy_id']}_v{iteration}",
-                "code": state["current_result"].get("strategy_code", ""),
+                "code": previous_code,
                 "diagnosis": state["analyst_feedback"],
             }
             mode = "evolve"
@@ -134,18 +185,13 @@ async def invoke_engineer_node(
                 "termination_reason": "engineer_validation_failed",
             }
 
-        # Extract generated strategy ID (would come from submit_node in real implementation)
-        generated_strategy_id = f"strategy_{run_id}_i{iteration}"
-
         logger.info(
             "Engineer completed successfully",
             iteration=iteration,
-            strategy_id=generated_strategy_id,
         )
 
         return {
-            "current_strategy_id": generated_strategy_id,
-            "messages": state["messages"] + [engineer_result],
+            "engineer_result": engineer_result,
         }
 
     except Exception as e:
@@ -163,31 +209,54 @@ async def submit_backtest_node(
 ) -> dict[str, Any]:
     """Submit backtest to Go backend via gRPC.
 
-    Sends the current strategy for backtesting.
+    Creates the generated strategy in the backend first,
+    then submits it for backtesting.
 
     Args:
         state: Current orchestrator state
         config: Optional configuration containing gRPC settings
 
     Returns:
-        State update with backtest job ID
+        State update with backtest job ID and strategy ID
     """
-    strategy_id = state["current_strategy_id"]
     iteration = state["current_iteration"]
     run_id = state["optimization_run_id"]
 
     logger.info(
-        "Submitting backtest",
-        strategy=strategy_id,
+        "Submitting backtest for iteration",
         iteration=iteration,
+        run_id=run_id,
     )
 
     try:
         # Get gRPC configuration
         grpc_address = config.get("grpc_address", "localhost:50051") if config else "localhost:50051"
 
-        # Get backtest configuration from config or use defaults
-        backtest_config_data = config.get("backtest_config", {}) if config else {}
+        # Get engineer result from state
+        engineer_result = state.get("engineer_result")
+        if not engineer_result:
+            logger.error("No engineer result available")
+            return {
+                "errors": state["errors"] + ["No engineer result available"],
+                "terminated": True,
+                "termination_reason": "missing_engineer_result",
+            }
+
+        generated_code = engineer_result.get("generated_code", "") or engineer_result.get("code", "")
+        if not generated_code:
+            logger.error("Engineer result has no code")
+            return {
+                "errors": state["errors"] + ["Engineer result has no code"],
+                "terminated": True,
+                "termination_reason": "missing_generated_code",
+            }
+
+        # Determine base strategy name for naming
+        base_strategy_id = state["base_strategy_id"]
+
+        # Get backtest configuration from state's optimization_config or use defaults
+        opt_config = state.get("optimization_config", {})
+        backtest_config_data = opt_config.get("backtest_config", {})
         backtest_cfg = BacktestConfig(
             exchange=backtest_config_data.get("exchange", "binance"),
             pairs=backtest_config_data.get("pairs", ["BTC/USDT"]),
@@ -199,17 +268,53 @@ async def submit_backtest_node(
             stake_amount=backtest_config_data.get("stake_amount", "unlimited"),
         )
 
-        # Submit backtest via gRPC
+        # Create strategy in backend and submit backtest via gRPC
         async with FreqSearchClient(grpc_address) as client:
+            # Create the new strategy in backend
+            try:
+                # Get base strategy name for better naming
+                base_strategy_name = f"strategy_{base_strategy_id}"
+                if iteration == 0:
+                    # For first iteration, try to get the actual name
+                    try:
+                        base_response = await client.get_strategy(base_strategy_id)
+                        base_strategy_name = base_response.get("strategy", {}).get("name", base_strategy_name)
+                    except Exception:
+                        # If we can't fetch it, just use the ID-based name
+                        pass
+
+                strategy_response = await client.create_strategy(
+                    name=f"{base_strategy_name}_opt_{run_id}_iter_{iteration}",
+                    code=generated_code,
+                    description=f"Generated in optimization run {run_id}, iteration {iteration}",
+                    parent_id=base_strategy_id if iteration == 0 else state.get("current_strategy_id"),
+                )
+                generated_strategy_id = strategy_response["strategy"]["id"]
+
+                logger.info(
+                    "Created strategy in backend",
+                    strategy_id=generated_strategy_id,
+                    iteration=iteration,
+                    parent_id=base_strategy_id if iteration == 0 else state.get("current_strategy_id"),
+                )
+            except Exception as e:
+                logger.error("Failed to create strategy in backend", iteration=iteration, error=str(e))
+                return {
+                    "errors": state["errors"] + [f"Failed to create strategy: {e}"],
+                    "terminated": True,
+                    "termination_reason": "strategy_creation_failed",
+                }
+
+            # Now submit backtest with the real strategy ID
             logger.debug(
-                "Calling gRPC submit_backtest",
+                "Submitting backtest via gRPC",
                 address=grpc_address,
-                strategy_id=strategy_id,
+                strategy_id=generated_strategy_id,
                 optimization_run_id=run_id,
             )
 
             response = await client.submit_backtest(
-                strategy_id=strategy_id,
+                strategy_id=generated_strategy_id,
                 config=backtest_cfg,
                 optimization_run_id=run_id,
                 priority=config.get("priority", 0) if config else 0,
@@ -220,7 +325,7 @@ async def submit_backtest_node(
         logger.info(
             "Backtest submitted via gRPC",
             job_id=job_id,
-            strategy=strategy_id,
+            strategy_id=generated_strategy_id,
         )
 
         # Publish backtest submitted event
@@ -228,25 +333,26 @@ async def submit_backtest_node(
             Events.BACKTEST_SUBMITTED,
             {
                 "job_id": job_id,
-                "strategy_id": strategy_id,
+                "strategy_id": generated_strategy_id,
                 "optimization_run_id": run_id,
                 "iteration": iteration,
             },
         )
 
         return {
+            "current_strategy_id": generated_strategy_id,
             "current_backtest_job_id": job_id,
         }
 
     except GrpcConnectionError as e:
-        logger.error("gRPC connection failed", strategy=strategy_id, error=str(e))
+        logger.error("gRPC connection failed", iteration=iteration, error=str(e))
         return {
             "errors": state["errors"] + [f"gRPC connection error: {str(e)}"],
             "terminated": True,
             "termination_reason": "grpc_connection_failed",
         }
     except Exception as e:
-        logger.exception("Failed to submit backtest", strategy=strategy_id, error=str(e))
+        logger.exception("Failed to submit backtest", iteration=iteration, error=str(e))
         return {
             "errors": state["errors"] + [f"Backtest submission error: {str(e)}"],
             "terminated": True,
@@ -307,11 +413,24 @@ async def wait_for_result_node(
                     break
                 elif job_status == "JOB_STATUS_FAILED":
                     error_msg = job_data["job"].get("error_message", "Unknown error")
-                    logger.error("Backtest failed", job_id=job_id, error=error_msg)
+                    logs = job_data["job"].get("logs", "")
+                    logger.warning("Backtest failed - will provide feedback to Engineer", job_id=job_id, error=error_msg)
+                    # Return failed result for Analyst to review and provide feedback
+                    # Don't terminate - let the optimization loop continue with feedback
                     return {
+                        "current_result": {
+                            "job_id": job_id,
+                            "strategy_id": state["current_strategy_id"],
+                            "status": "FAILED",
+                            "error_message": error_msg,
+                            "logs": logs,
+                            "total_trades": 0,
+                            "profit_pct": 0.0,
+                            "win_rate": 0.0,
+                            "max_drawdown_pct": 0.0,
+                            "sharpe_ratio": 0.0,
+                        },
                         "errors": state["errors"] + [f"Backtest failed: {error_msg}"],
-                        "terminated": True,
-                        "termination_reason": "backtest_failed",
                     }
                 elif job_status == "JOB_STATUS_CANCELLED":
                     logger.warning("Backtest was cancelled", job_id=job_id)
@@ -426,6 +545,30 @@ async def invoke_analyst_node(
             "termination_reason": "missing_result",
         }
 
+    # Handle failed backtests directly - no need to call Analyst
+    if result.get("status") == "FAILED":
+        error_msg = result.get("error_message", "Unknown error")
+        logs = result.get("logs", "")
+        logger.warning(
+            "Backtest failed - automatically requesting code fix",
+            job_id=result.get("job_id"),
+            iteration=state["current_iteration"],
+            error=error_msg,
+        )
+        # Extract relevant error info from logs for Engineer
+        feedback = {
+            "suggestion_type": "code_fix",
+            "suggestion_description": f"Fix code error: {error_msg}",
+            "error_message": error_msg,
+            "logs": logs[-2000:] if logs else "",  # Last 2000 chars of logs
+            "issues": [error_msg],
+            "root_causes": ["Strategy code contains errors that prevent execution"],
+        }
+        return {
+            "analyst_decision": DiagnosisStatus.NEEDS_MODIFICATION.value,
+            "analyst_feedback": feedback,
+        }
+
     logger.info(
         "Invoking Analyst Agent",
         job_id=result.get("job_id"),
@@ -534,7 +677,7 @@ async def process_decision_node(
 
         # Publish new best event
         await publish_event(
-            "optimization.new_best",
+            Events.OPTIMIZATION_NEW_BEST,
             {
                 "optimization_run_id": state["optimization_run_id"],
                 "iteration": iteration,
@@ -568,7 +711,7 @@ async def process_decision_node(
 
     # Publish iteration completed event
     await publish_event(
-        "optimization.iteration.completed",
+        Events.OPTIMIZATION_ITERATION_COMPLETED,
         {
             "optimization_run_id": state["optimization_run_id"],
             "iteration": iteration,
@@ -651,11 +794,19 @@ async def complete_optimization_node(
             "best_max_drawdown": state["best_result"].get("max_drawdown_pct"),
         })
 
-    # Get final optimization run status from backend
-    try:
-        grpc_address = config.get("grpc_address", "localhost:50051") if config else "localhost:50051"
+    # Get gRPC config
+    opt_config = state.get("optimization_config", {})
+    grpc_address = opt_config.get("grpc_address", "localhost:50051")
+    if config and "grpc_address" in config:
+        grpc_address = config["grpc_address"]
 
+    # Set optimization status to COMPLETED
+    try:
         async with FreqSearchClient(grpc_address) as client:
+            # Set status to completed
+            await client.control_optimization(run_id, "complete")
+            logger.info("Set optimization status to COMPLETED", run_id=run_id)
+
             # Get the final optimization run state
             opt_run_data = await client.get_optimization_run(run_id)
 
@@ -670,14 +821,14 @@ async def complete_optimization_node(
 
     except GrpcConnectionError as e:
         logger.warning(
-            "Could not retrieve final optimization status from backend",
+            "Could not update/retrieve final optimization status from backend",
             run_id=run_id,
             error=str(e),
         )
         # Non-fatal: continue with completion
     except Exception as e:
         logger.warning(
-            "Error retrieving final optimization status",
+            "Error updating/retrieving final optimization status",
             run_id=run_id,
             error=str(e),
         )
@@ -685,7 +836,7 @@ async def complete_optimization_node(
 
     # Publish completion event
     await publish_event(
-        "optimization.completed",
+        Events.OPTIMIZATION_COMPLETED,
         summary,
     )
 
@@ -718,9 +869,23 @@ async def handle_failure_node(
         errors=errors,
     )
 
+    # Get gRPC config
+    opt_config = state.get("optimization_config", {})
+    grpc_address = opt_config.get("grpc_address", "localhost:50051")
+    if config and "grpc_address" in config:
+        grpc_address = config["grpc_address"]
+
+    # Set optimization status to FAILED
+    try:
+        async with FreqSearchClient(grpc_address) as client:
+            await client.control_optimization(run_id, "fail")
+            logger.info("Set optimization status to FAILED", run_id=run_id)
+    except Exception as e:
+        logger.warning("Failed to set optimization status to FAILED", run_id=run_id, error=str(e))
+
     # Publish failure event
     await publish_event(
-        "optimization.failed",
+        Events.OPTIMIZATION_FAILED,
         {
             "optimization_run_id": run_id,
             "base_strategy_id": state["base_strategy_id"],

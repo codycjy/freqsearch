@@ -21,7 +21,72 @@ import type {
   OptimizationRun,
   OptimizationIteration,
   ControlOptimizationPayload,
+  JobStatus,
+  OptimizationStatus,
 } from "./types";
+
+/**
+ * Transform lowercase status from API to protobuf-style status
+ */
+const transformJobStatus = (status: string): JobStatus => {
+  const statusMap: Record<string, JobStatus> = {
+    pending: "JOB_STATUS_PENDING",
+    running: "JOB_STATUS_RUNNING",
+    completed: "JOB_STATUS_COMPLETED",
+    failed: "JOB_STATUS_FAILED",
+    cancelled: "JOB_STATUS_CANCELLED",
+  };
+  return statusMap[status?.toLowerCase()] || "JOB_STATUS_UNSPECIFIED";
+};
+
+const transformOptimizationStatus = (status: string): OptimizationStatus => {
+  const statusMap: Record<string, OptimizationStatus> = {
+    pending: "OPTIMIZATION_STATUS_PENDING",
+    running: "OPTIMIZATION_STATUS_RUNNING",
+    paused: "OPTIMIZATION_STATUS_PAUSED",
+    completed: "OPTIMIZATION_STATUS_COMPLETED",
+    failed: "OPTIMIZATION_STATUS_FAILED",
+    cancelled: "OPTIMIZATION_STATUS_CANCELLED",
+  };
+  return statusMap[status?.toLowerCase()] || "OPTIMIZATION_STATUS_UNSPECIFIED";
+};
+
+/**
+ * Transform backtest job with status normalization
+ */
+const transformBacktestJob = (job: any): BacktestJob => {
+  return {
+    ...job,
+    status: transformJobStatus(job.status),
+  };
+};
+
+/**
+ * Transform optimization run with status normalization
+ */
+const transformOptimizationRun = (run: any): OptimizationRun => {
+  return {
+    ...run,
+    status: transformOptimizationStatus(run.status),
+  };
+};
+
+/**
+ * Transform strategy list item from nested { strategy, best_result } to flat structure
+ * API returns: { strategy: { id, name, ... }, best_result: { ... } }
+ * Frontend expects: { id, name, ..., best_result: { ... } }
+ */
+const transformStrategyListItem = (item: any): any => {
+  if (item.strategy) {
+    // Nested structure from list endpoint
+    return {
+      ...item.strategy,
+      best_result: item.best_result,
+    };
+  }
+  // Already flat (from getOne or already transformed)
+  return item;
+};
 
 /**
  * Type guard to check if a resource is a known resource type
@@ -87,16 +152,20 @@ const mapFiltersToParams = (filters?: any[]): Record<string, any> => {
         params[`min_${field}`] = value;
         break;
       case "contains":
-        params[`${field}_pattern`] = `%${value}%`;
+        // Backend adds wildcards, so just pass the value
+        params[`${field}_pattern`] = value;
         break;
       case "containss":
-        params[`${field}_pattern`] = `%${value}%`;
+        // Backend adds wildcards, so just pass the value
+        params[`${field}_pattern`] = value;
         break;
       case "startswith":
-        params[`${field}_pattern`] = `${value}%`;
+        // For startswith, we need custom handling - backend adds both % so this won't work perfectly
+        params[`${field}_pattern`] = value;
         break;
       case "endswith":
-        params[`${field}_pattern`] = `%${value}`;
+        // For endswith, we need custom handling - backend adds both % so this won't work perfectly
+        params[`${field}_pattern`] = value;
         break;
       case "in":
         // For array values, join with comma
@@ -173,8 +242,18 @@ export const dataProvider: DataProvider = {
 
     const { data } = await axiosInstance.get(endpoint, { params });
 
+    // Transform items based on resource type
+    let items = data[listKey] || [];
+    if (resource === "strategies") {
+      items = items.map(transformStrategyListItem);
+    } else if (resource === "backtests") {
+      items = items.map(transformBacktestJob);
+    } else if (resource === "optimizations") {
+      items = items.map(transformOptimizationRun);
+    }
+
     return {
-      data: data[listKey] || [],
+      data: items,
       total: data.pagination?.total_count || 0,
     };
   },
@@ -195,6 +274,9 @@ export const dataProvider: DataProvider = {
     });
 
     // Unwrap nested responses based on resource type
+    if (resource === "strategies" && data.strategy) {
+      return { data: data.strategy };
+    }
     if (resource === "scout-runs" && data.run) {
       return { data: data.run };
     }
@@ -202,12 +284,14 @@ export const dataProvider: DataProvider = {
       return { data: data.schedule };
     }
     if (resource === "optimizations" && data.run) {
-      // For optimizations, include iterations in the run object
-      return { data: { ...data.run, iterations: data.iterations } };
+      // For optimizations, include iterations in the run object and transform status
+      const transformedRun = transformOptimizationRun(data.run);
+      return { data: { ...transformedRun, iterations: data.iterations } };
     }
     if (resource === "backtests" && data.job) {
-      // For backtests, include result in the job object if available
-      return { data: { ...data.job, result: data.result } };
+      // For backtests, include result in the job object if available and transform status
+      const transformedJob = transformBacktestJob(data.job);
+      return { data: { ...transformedJob, result: data.result } };
     }
 
     return { data };
@@ -271,6 +355,11 @@ export const dataProvider: DataProvider = {
     const { data } = await axiosInstance.put(`${endpoint}/${id}`, variables, {
       params: meta,
     });
+
+    // Unwrap nested responses for update
+    if (resource === "strategies" && data.strategy) {
+      return { data: data.strategy };
+    }
 
     return { data };
   },

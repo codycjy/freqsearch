@@ -1,10 +1,39 @@
 package domain
 
 import (
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// digitPrefixRegex matches class/strategy names starting with digits
+var digitPrefixRegex = regexp.MustCompile(`^(\d+)_?(.*)$`)
+
+// SanitizeStrategyName fixes strategy names that would be invalid Python class names.
+// Python class names cannot start with a digit, so we reorder: "01_Strategy" -> "Strategy_01"
+func SanitizeStrategyName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "Strategy"
+	}
+
+	// Check if name starts with digit
+	if name[0] >= '0' && name[0] <= '9' {
+		matches := digitPrefixRegex.FindStringSubmatch(name)
+		if matches != nil {
+			digits := matches[1]
+			rest := matches[2]
+			if rest == "" {
+				return "Strategy_" + digits
+			}
+			return rest + "_" + digits
+		}
+	}
+
+	return name
+}
 
 // StrategyTags contains classification tags for a strategy.
 type StrategyTags struct {

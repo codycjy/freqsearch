@@ -20,6 +20,9 @@ type Publisher interface {
 	// Publish publishes an event with the given routing key.
 	Publish(ctx context.Context, routingKey string, event interface{}) error
 
+	// PublishTaskCreated publishes a task created event.
+	PublishTaskCreated(job *domain.BacktestJob) error
+
 	// PublishTaskRunning publishes a task running event.
 	PublishTaskRunning(job *domain.BacktestJob) error
 
@@ -31,6 +34,21 @@ type Publisher interface {
 
 	// PublishTaskCancelled publishes a task cancelled event.
 	PublishTaskCancelled(job *domain.BacktestJob) error
+
+	// PublishOptimizationStarted publishes an optimization started event.
+	PublishOptimizationStarted(run *domain.OptimizationRun) error
+
+	// PublishOptimizationIteration publishes an optimization iteration event.
+	PublishOptimizationIteration(event *OptimizationIterationEvent) error
+
+	// PublishOptimizationCompleted publishes an optimization completed event.
+	PublishOptimizationCompleted(run *domain.OptimizationRun) error
+
+	// PublishOptimizationFailed publishes an optimization failed event.
+	PublishOptimizationFailed(run *domain.OptimizationRun, reason string) error
+
+	// PublishOptimizationStatusChanged publishes an optimization status changed event.
+	PublishOptimizationStatusChanged(run *domain.OptimizationRun, oldStatus, newStatus string) error
 
 	// PublishScoutTrigger publishes a scout trigger event.
 	PublishScoutTrigger(event *ScoutTriggerEvent) error
@@ -217,10 +235,10 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, routingKey string, even
 	// Publish message
 	err = channel.PublishWithContext(
 		ctx,
-		p.exchange,  // exchange
-		routingKey,  // routing key
-		false,       // mandatory
-		false,       // immediate
+		p.exchange, // exchange
+		routingKey, // routing key
+		false,      // mandatory
+		false,      // immediate
 		amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
@@ -262,6 +280,51 @@ func (p *RabbitMQPublisher) PublishTaskFailed(job *domain.BacktestJob, errMsg st
 func (p *RabbitMQPublisher) PublishTaskCancelled(job *domain.BacktestJob) error {
 	event := NewTaskCancelledEvent(job)
 	return p.Publish(context.Background(), RoutingKeyTaskCancelled, event)
+}
+
+// PublishTaskCreated publishes a task created event.
+func (p *RabbitMQPublisher) PublishTaskCreated(job *domain.BacktestJob) error {
+	event := NewTaskCreatedEvent(job)
+	return p.Publish(context.Background(), RoutingKeyTaskCreated, event)
+}
+
+// PublishOptimizationStarted publishes an optimization started event.
+func (p *RabbitMQPublisher) PublishOptimizationStarted(run *domain.OptimizationRun) error {
+	event := NewOptimizationStartedEvent(run)
+	err := p.Publish(context.Background(), RoutingKeyOptStarted, event)
+	if err != nil {
+		p.logger.Error("Failed to publish optimization.started event",
+			zap.String("run_id", run.ID.String()),
+			zap.Error(err))
+	} else {
+		p.logger.Info("Published optimization.started event",
+			zap.String("run_id", run.ID.String()),
+			zap.String("routing_key", RoutingKeyOptStarted))
+	}
+	return err
+}
+
+// PublishOptimizationIteration publishes an optimization iteration event.
+func (p *RabbitMQPublisher) PublishOptimizationIteration(event *OptimizationIterationEvent) error {
+	return p.Publish(context.Background(), RoutingKeyOptIteration, event)
+}
+
+// PublishOptimizationCompleted publishes an optimization completed event.
+func (p *RabbitMQPublisher) PublishOptimizationCompleted(run *domain.OptimizationRun) error {
+	event := NewOptimizationCompletedEvent(run)
+	return p.Publish(context.Background(), RoutingKeyOptCompleted, event)
+}
+
+// PublishOptimizationFailed publishes an optimization failed event.
+func (p *RabbitMQPublisher) PublishOptimizationFailed(run *domain.OptimizationRun, reason string) error {
+	event := NewOptimizationFailedEvent(run, reason)
+	return p.Publish(context.Background(), RoutingKeyOptFailed, event)
+}
+
+// PublishOptimizationStatusChanged publishes an optimization status changed event.
+func (p *RabbitMQPublisher) PublishOptimizationStatusChanged(run *domain.OptimizationRun, oldStatus, newStatus string) error {
+	event := NewOptimizationStatusChangedEvent(run, oldStatus, newStatus)
+	return p.Publish(context.Background(), RoutingKeyOptStatusChanged, event)
 }
 
 // PublishScoutTrigger publishes a scout trigger event.
@@ -319,6 +382,10 @@ func (p *NoOpPublisher) Publish(ctx context.Context, routingKey string, event in
 	return nil
 }
 
+func (p *NoOpPublisher) PublishTaskCreated(job *domain.BacktestJob) error {
+	return nil
+}
+
 func (p *NoOpPublisher) PublishTaskRunning(job *domain.BacktestJob) error {
 	return nil
 }
@@ -332,6 +399,26 @@ func (p *NoOpPublisher) PublishTaskFailed(job *domain.BacktestJob, errMsg string
 }
 
 func (p *NoOpPublisher) PublishTaskCancelled(job *domain.BacktestJob) error {
+	return nil
+}
+
+func (p *NoOpPublisher) PublishOptimizationStarted(run *domain.OptimizationRun) error {
+	return nil
+}
+
+func (p *NoOpPublisher) PublishOptimizationIteration(event *OptimizationIterationEvent) error {
+	return nil
+}
+
+func (p *NoOpPublisher) PublishOptimizationCompleted(run *domain.OptimizationRun) error {
+	return nil
+}
+
+func (p *NoOpPublisher) PublishOptimizationFailed(run *domain.OptimizationRun, reason string) error {
+	return nil
+}
+
+func (p *NoOpPublisher) PublishOptimizationStatusChanged(run *domain.OptimizationRun, oldStatus, newStatus string) error {
 	return nil
 }
 

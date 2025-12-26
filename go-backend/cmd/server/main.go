@@ -36,7 +36,7 @@ func main() {
 	configPath := flag.String("config", "", "Path to configuration file (YAML)")
 	flag.Parse()
 
-	fmt.Println("FreqSearch Backend",*configPath)
+	fmt.Println("FreqSearch Backend", *configPath)
 	// Load configuration
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -183,7 +183,7 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 
 	// 9. Start gRPC server
 	grpcAddr := fmt.Sprintf(":%d", cfg.GoBackend.GRPCPort)
-	grpcServer := grpc.NewServer(repos, sched, logger)
+	grpcServer := grpc.NewServer(repos, sched, eventPublisher, logger)
 
 	go func() {
 		logger.Info("gRPC server starting", zap.String("address", grpcAddr))

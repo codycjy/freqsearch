@@ -46,6 +46,18 @@ class Events:
     # Agent heartbeat
     AGENT_HEARTBEAT = "agent.heartbeat"
 
+    # Optimization events
+    OPTIMIZATION_STARTED = "optimization.started"
+    OPTIMIZATION_ITERATION_STARTED = "optimization.iteration.started"
+    OPTIMIZATION_ITERATION_COMPLETED = "optimization.iteration.completed"
+    OPTIMIZATION_NEW_BEST = "optimization.new_best"
+    OPTIMIZATION_COMPLETED = "optimization.completed"
+    OPTIMIZATION_FAILED = "optimization.failed"
+    OPTIMIZATION_STATUS_CHANGED = "optimization.status_changed"
+
+    # Task events
+    TASK_CREATED = "task.created"
+
 
 class MessageBroker:
     """RabbitMQ message broker for agent communication."""

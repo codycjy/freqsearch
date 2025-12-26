@@ -7,8 +7,9 @@ from . import backtest_pb2 as freqsearch_dot_v1_dot_backtest__pb2
 from . import common_pb2 as freqsearch_dot_v1_dot_common__pb2
 from . import freqsearch_pb2 as freqsearch_dot_v1_dot_freqsearch__pb2
 from . import strategy_pb2 as freqsearch_dot_v1_dot_strategy__pb2
+from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 
-GRPC_GENERATED_VERSION = '1.76.0'
+GRPC_GENERATED_VERSION = '1.74.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -21,7 +22,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in freqsearch/v1/freqsearch_pb2_grpc.py depends on'
+        + f' but the generated code in freqsearch/v1/freqsearch_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -119,6 +120,16 @@ class FreqSearchServiceStub(object):
                 '/freqsearch.v1.FreqSearchService/ListOptimizationRuns',
                 request_serializer=freqsearch_dot_v1_dot_freqsearch__pb2.ListOptimizationRunsRequest.SerializeToString,
                 response_deserializer=freqsearch_dot_v1_dot_freqsearch__pb2.ListOptimizationRunsResponse.FromString,
+                _registered_method=True)
+        self.UpdateIterationResult = channel.unary_unary(
+                '/freqsearch.v1.FreqSearchService/UpdateIterationResult',
+                request_serializer=freqsearch_dot_v1_dot_freqsearch__pb2.UpdateIterationResultRequest.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                _registered_method=True)
+        self.UpdateIterationFeedback = channel.unary_unary(
+                '/freqsearch.v1.FreqSearchService/UpdateIterationFeedback',
+                request_serializer=freqsearch_dot_v1_dot_freqsearch__pb2.UpdateIterationFeedbackRequest.SerializeToString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 _registered_method=True)
         self.HealthCheck = channel.unary_unary(
                 '/freqsearch.v1.FreqSearchService/HealthCheck',
@@ -249,6 +260,20 @@ class FreqSearchServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def UpdateIterationResult(self, request, context):
+        """Update iteration result
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateIterationFeedback(self, request, context):
+        """Update iteration feedback
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def HealthCheck(self, request, context):
         """===== Health =====
 
@@ -340,6 +365,16 @@ def add_FreqSearchServiceServicer_to_server(servicer, server):
                     servicer.ListOptimizationRuns,
                     request_deserializer=freqsearch_dot_v1_dot_freqsearch__pb2.ListOptimizationRunsRequest.FromString,
                     response_serializer=freqsearch_dot_v1_dot_freqsearch__pb2.ListOptimizationRunsResponse.SerializeToString,
+            ),
+            'UpdateIterationResult': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateIterationResult,
+                    request_deserializer=freqsearch_dot_v1_dot_freqsearch__pb2.UpdateIterationResultRequest.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            ),
+            'UpdateIterationFeedback': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateIterationFeedback,
+                    request_deserializer=freqsearch_dot_v1_dot_freqsearch__pb2.UpdateIterationFeedbackRequest.FromString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
             'HealthCheck': grpc.unary_unary_rpc_method_handler(
                     servicer.HealthCheck,
@@ -782,6 +817,60 @@ class FreqSearchService(object):
             '/freqsearch.v1.FreqSearchService/ListOptimizationRuns',
             freqsearch_dot_v1_dot_freqsearch__pb2.ListOptimizationRunsRequest.SerializeToString,
             freqsearch_dot_v1_dot_freqsearch__pb2.ListOptimizationRunsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateIterationResult(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/freqsearch.v1.FreqSearchService/UpdateIterationResult',
+            freqsearch_dot_v1_dot_freqsearch__pb2.UpdateIterationResultRequest.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateIterationFeedback(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/freqsearch.v1.FreqSearchService/UpdateIterationFeedback',
+            freqsearch_dot_v1_dot_freqsearch__pb2.UpdateIterationFeedbackRequest.SerializeToString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options,
             channel_credentials,
             insecure,

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,12 +59,25 @@ type BacktestConfig struct {
 	DryRunWallet      float64                `json:"dry_run_wallet"`
 	MaxOpenTrades     int                    `json:"max_open_trades"`
 	StakeAmount       string                 `json:"stake_amount"`
+	TradingMode       string                 `json:"trading_mode"`
 	HyperoptOverrides map[string]interface{} `json:"hyperopt_overrides,omitempty"`
 }
 
+// GetTradingMode returns the trading mode, defaulting to "futures" if not set.
+func (c *BacktestConfig) GetTradingMode() string {
+	if c.TradingMode == "" {
+		return "futures"
+	}
+	return c.TradingMode
+}
+
 // Timerange returns the formatted timerange string for Freqtrade.
+// Freqtrade expects format: YYYYMMDD-YYYYMMDD
+// Input may be YYYY-MM-DD or YYYYMMDD
 func (c *BacktestConfig) Timerange() string {
-	return c.TimerangeStart + "-" + c.TimerangeEnd
+	start := strings.ReplaceAll(c.TimerangeStart, "-", "")
+	end := strings.ReplaceAll(c.TimerangeEnd, "-", "")
+	return start + "-" + end
 }
 
 // BacktestResult represents the result of a completed backtest.

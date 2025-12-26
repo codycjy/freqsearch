@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -104,18 +105,63 @@ func (b *ConfigBuilder) applyBacktestConfig(config map[string]interface{}, btCon
 		}
 	}
 
+	// Transform pairs for futures trading mode
+	// Futures pairs need format: "BTC/USDT:USDT" instead of "BTC/USDT"
+	pairs := btConfig.Pairs
+	if tradingMode, ok := config["trading_mode"].(string); ok && tradingMode == "futures" {
+		// Get stake currency from config (defaults to USDT)
+		stakeCurrency := "USDT"
+		if sc, ok := config["stake_currency"].(string); ok {
+			stakeCurrency = sc
+		}
+		pairs = transformPairsForFutures(btConfig.Pairs, stakeCurrency)
+	}
+
 	// Pairs whitelist
-	config["exchange"].(map[string]interface{})["pair_whitelist"] = btConfig.Pairs
+	config["exchange"].(map[string]interface{})["pair_whitelist"] = pairs
 
 	// Timeframe
 	config["timeframe"] = btConfig.Timeframe
 
 	// Trading settings
 	config["max_open_trades"] = btConfig.MaxOpenTrades
-	config["stake_amount"] = btConfig.StakeAmount
+
+	// Set stake_amount with default if empty
+	stakeAmount := btConfig.StakeAmount
+	if stakeAmount == "" {
+		stakeAmount = "unlimited"
+	}
+	config["stake_amount"] = stakeAmount
 	config["dry_run_wallet"] = btConfig.DryRunWallet
 
+	// Disable API server with required fields (Freqtrade requires all fields even when disabled)
+	config["api_server"] = map[string]interface{}{
+		"enabled":           false,
+		"listen_ip_address": "127.0.0.1",
+		"listen_port":       8080,
+		"username":          "freqtrade",
+		"password":          "freqtrade",
+	}
+
 	// Timerange is passed via CLI, not config
+}
+
+// transformPairsForFutures converts spot pair format to futures format.
+// "BTC/USDT" -> "BTC/USDT:USDT"
+func transformPairsForFutures(pairs []string, stakeCurrency string) []string {
+	result := make([]string, len(pairs))
+	suffix := ":" + stakeCurrency
+
+	for i, pair := range pairs {
+		// Only add suffix if not already present
+		if !strings.Contains(pair, ":") {
+			result[i] = pair + suffix
+		} else {
+			result[i] = pair
+		}
+	}
+
+	return result
 }
 
 // applyOverrides merges hyperopt overrides into the config.

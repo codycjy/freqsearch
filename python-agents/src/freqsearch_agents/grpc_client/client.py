@@ -814,14 +814,14 @@ class FreqSearchClient:
     async def control_optimization(
         self,
         run_id: str,
-        action: str,  # "pause", "resume", "cancel"
+        action: str,  # "pause", "resume", "cancel", "complete", "fail"
     ) -> Dict[str, Any]:
         """
-        Control an optimization run (pause, resume, cancel).
+        Control an optimization run (pause, resume, cancel, complete, fail).
 
         Args:
             run_id: Optimization run ID
-            action: Control action ("pause", "resume", "cancel")
+            action: Control action ("pause", "resume", "cancel", "complete", "fail")
 
         Returns:
             Dict with "success" and updated "run"
@@ -837,10 +837,12 @@ class FreqSearchClient:
             "pause": freqsearch_pb2.OPTIMIZATION_ACTION_PAUSE,
             "resume": freqsearch_pb2.OPTIMIZATION_ACTION_RESUME,
             "cancel": freqsearch_pb2.OPTIMIZATION_ACTION_CANCEL,
+            "complete": freqsearch_pb2.OPTIMIZATION_ACTION_COMPLETE,
+            "fail": freqsearch_pb2.OPTIMIZATION_ACTION_FAIL,
         }
 
         if action not in action_map:
-            raise ValidationError(f"Invalid action: {action}. Must be one of: pause, resume, cancel")
+            raise ValidationError(f"Invalid action: {action}. Must be one of: pause, resume, cancel, complete, fail")
 
         request = freqsearch_pb2.ControlOptimizationRequest(
             run_id=run_id,

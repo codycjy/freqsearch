@@ -123,10 +123,23 @@ func (h *Handler) HandleCreateStrategy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sanitize strategy name to ensure valid Python class name
+	sanitizedName := domain.SanitizeStrategyName(req.Name)
+
+	// Also fix class name in code if it doesn't match
+	code := req.Code
+	if sanitizedName != req.Name {
+		code = strings.Replace(code, "class "+req.Name+"(", "class "+sanitizedName+"(", 1)
+		h.logger.Info("Sanitized strategy name",
+			zap.String("original", req.Name),
+			zap.String("sanitized", sanitizedName),
+		)
+	}
+
 	strategy := &domain.Strategy{
 		ID:          uuid.New(),
-		Name:        req.Name,
-		Code:        req.Code,
+		Name:        sanitizedName,
+		Code:        code,
 		Description: req.Description,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -181,6 +194,85 @@ func (h *Handler) HandleGetStrategy(w http.ResponseWriter, r *http.Request) {
 		}
 		h.logger.Error("Failed to get strategy", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, err, "failed to get strategy")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, GetStrategyResponse{Strategy: strategy})
+}
+
+// UpdateStrategyRequest represents the request body for updating a strategy.
+type UpdateStrategyRequest struct {
+	Name        string  `json:"name"`
+	Code        string  `json:"code"`
+	Description string  `json:"description"`
+	ParentID    *string `json:"parent_id,omitempty"`
+}
+
+// HandleUpdateStrategy updates an existing strategy.
+func (h *Handler) HandleUpdateStrategy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"), "")
+		return
+	}
+
+	idStr := extractID(r.URL.Path, "/api/v1/strategies/")
+	id, err := parseUUID(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err, "invalid strategy id")
+		return
+	}
+
+	var req UpdateStrategyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err, "invalid request body")
+		return
+	}
+
+	// Get existing strategy
+	strategy, err := h.repos.Strategy.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			writeError(w, http.StatusNotFound, err, "strategy not found")
+			return
+		}
+		h.logger.Error("Failed to get strategy", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, err, "failed to get strategy")
+		return
+	}
+
+	// Sanitize strategy name
+	sanitizedName := domain.SanitizeStrategyName(req.Name)
+
+	// Update code class name if needed
+	code := req.Code
+	if sanitizedName != req.Name {
+		code = strings.Replace(code, "class "+req.Name+"(", "class "+sanitizedName+"(", 1)
+		h.logger.Info("Sanitized strategy name",
+			zap.String("original", req.Name),
+			zap.String("sanitized", sanitizedName),
+		)
+	}
+
+	// Update strategy fields
+	strategy.Name = sanitizedName
+	strategy.Code = code
+	strategy.Description = req.Description
+	strategy.UpdatedAt = time.Now()
+
+	if req.ParentID != nil && *req.ParentID != "" {
+		parentID, err := parseUUID(*req.ParentID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err, "invalid parent_id")
+			return
+		}
+		strategy.ParentID = &parentID
+	} else {
+		strategy.ParentID = nil
+	}
+
+	if err := h.repos.Strategy.Update(r.Context(), strategy); err != nil {
+		h.logger.Error("Failed to update strategy", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, err, "failed to update strategy")
 		return
 	}
 
@@ -708,6 +800,12 @@ func (h *Handler) HandleStartOptimization(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Publish optimization.started event to trigger Python orchestrator
+	if err := h.eventPublisher.PublishOptimizationStarted(run); err != nil {
+		h.logger.Error("Failed to publish optimization started event", zap.Error(err), zap.String("run_id", run.ID.String()))
+		// Don't fail the request, just log the error - optimization was created
+	}
+
 	writeJSON(w, http.StatusCreated, StartOptimizationResponse{Run: run})
 }
 
@@ -874,8 +972,12 @@ func (h *Handler) HandleControlOptimization(w http.ResponseWriter, r *http.Reque
 		newStatus = domain.OptimizationStatusRunning
 	case "cancel":
 		newStatus = domain.OptimizationStatusCancelled
+	case "complete":
+		newStatus = domain.OptimizationStatusCompleted
+	case "fail":
+		newStatus = domain.OptimizationStatusFailed
 	default:
-		writeError(w, http.StatusBadRequest, errors.New("invalid action"), "action must be 'pause', 'resume', or 'cancel'")
+		writeError(w, http.StatusBadRequest, errors.New("invalid action"), "action must be 'pause', 'resume', 'cancel', 'complete', or 'fail'")
 		return
 	}
 

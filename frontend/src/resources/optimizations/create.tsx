@@ -1,13 +1,13 @@
 import { useForm, useSelect } from '@refinedev/antd';
 import { Create } from '@refinedev/antd';
 import { Form, Input, InputNumber, Select, Card, Row, Col } from 'antd';
-import type { CreateOptimizationPayload, OptimizationMode, Strategy } from '@providers/types';
+import type { CreateOptimizationPayload, Strategy } from '@providers/types';
 
-const optimizationModes: Array<{ label: string; value: OptimizationMode }> = [
-  { label: 'Maximize Sharpe Ratio', value: 'OPTIMIZATION_MODE_MAXIMIZE_SHARPE' },
-  { label: 'Maximize Profit', value: 'OPTIMIZATION_MODE_MAXIMIZE_PROFIT' },
-  { label: 'Minimize Drawdown', value: 'OPTIMIZATION_MODE_MINIMIZE_DRAWDOWN' },
-  { label: 'Balanced', value: 'OPTIMIZATION_MODE_BALANCED' },
+const optimizationModes: Array<{ label: string; value: string }> = [
+  { label: 'Maximize Sharpe Ratio', value: 'maximize_sharpe' },
+  { label: 'Maximize Profit', value: 'maximize_profit' },
+  { label: 'Minimize Drawdown', value: 'minimize_drawdown' },
+  { label: 'Balanced', value: 'balanced' },
 ];
 
 export const OptimizationCreate = () => {
@@ -29,9 +29,9 @@ export const OptimizationCreate = () => {
         initialValues={{
           config: {
             max_iterations: 50,
-            mode: 'OPTIMIZATION_MODE_MAXIMIZE_SHARPE',
+            mode: 'maximize_sharpe',
             backtest_config: {
-              exchange: 'binance',
+              exchange: 'bybit',
               timeframe: '1h',
               dry_run_wallet: 1000,
               max_open_trades: 3,
@@ -112,9 +112,11 @@ export const OptimizationCreate = () => {
               >
                 <Select>
                   <Select.Option value="binance">Binance</Select.Option>
-                  <Select.Option value="kraken">Kraken</Select.Option>
-                  <Select.Option value="coinbase">Coinbase</Select.Option>
                   <Select.Option value="bybit">Bybit</Select.Option>
+                  <Select.Option value="okx">OKX</Select.Option>
+                  <Select.Option value="coinbasepro">Coinbase Pro</Select.Option>
+                  <Select.Option value="kraken">Kraken</Select.Option>
+                  <Select.Option value="bitfinex">Bitfinex</Select.Option>
                 </Select>
               </Form.Item>
             </Col>

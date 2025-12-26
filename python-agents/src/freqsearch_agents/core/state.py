@@ -137,6 +137,7 @@ class OrchestratorState(TypedDict):
     optimization_run_id: str
     base_strategy_id: str
     current_strategy_id: str
+    optimization_config: dict[str, Any]  # Full config including backtest_config
 
     # Iteration tracking
     current_iteration: int
@@ -150,6 +151,7 @@ class OrchestratorState(TypedDict):
     # Current iteration state
     current_backtest_job_id: str | None
     current_result: dict[str, Any] | None
+    engineer_result: dict[str, Any] | None  # Result from Engineer agent
     analyst_decision: str | None  # "approve", "modify", "archive"
     analyst_feedback: dict[str, Any] | None
 

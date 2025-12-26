@@ -57,6 +57,7 @@ type JobResult struct {
 	Result  *domain.BacktestResult
 	Success bool
 	Error   error
+	Logs    string
 }
 
 // Config holds scheduler configuration.
@@ -274,6 +275,11 @@ func (s *Scheduler) processResult(result *JobResult) {
 		errMsg := "unknown error"
 		if result.Error != nil {
 			errMsg = result.Error.Error()
+		}
+
+		// Append logs to error message for debugging
+		if result.Logs != "" {
+			errMsg = errMsg + "\n\n--- Container Logs ---\n" + result.Logs
 		}
 
 		if err := s.repos.BacktestJob.MarkFailed(s.ctx, job.ID, errMsg); err != nil {

@@ -1,6 +1,7 @@
 import datetime
 
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
+from google.protobuf import empty_pb2 as _empty_pb2
 from freqsearch.v1 import common_pb2 as _common_pb2
 from freqsearch.v1 import strategy_pb2 as _strategy_pb2
 from freqsearch.v1 import backtest_pb2 as _backtest_pb2
@@ -37,6 +38,8 @@ class OptimizationAction(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     OPTIMIZATION_ACTION_PAUSE: _ClassVar[OptimizationAction]
     OPTIMIZATION_ACTION_RESUME: _ClassVar[OptimizationAction]
     OPTIMIZATION_ACTION_CANCEL: _ClassVar[OptimizationAction]
+    OPTIMIZATION_ACTION_COMPLETE: _ClassVar[OptimizationAction]
+    OPTIMIZATION_ACTION_FAIL: _ClassVar[OptimizationAction]
 OPTIMIZATION_MODE_UNSPECIFIED: OptimizationMode
 OPTIMIZATION_MODE_MAXIMIZE_SHARPE: OptimizationMode
 OPTIMIZATION_MODE_MAXIMIZE_PROFIT: OptimizationMode
@@ -53,6 +56,8 @@ OPTIMIZATION_ACTION_UNSPECIFIED: OptimizationAction
 OPTIMIZATION_ACTION_PAUSE: OptimizationAction
 OPTIMIZATION_ACTION_RESUME: OptimizationAction
 OPTIMIZATION_ACTION_CANCEL: OptimizationAction
+OPTIMIZATION_ACTION_COMPLETE: OptimizationAction
+OPTIMIZATION_ACTION_FAIL: OptimizationAction
 
 class OptimizationRun(_message.Message):
     __slots__ = ("id", "name", "base_strategy_id", "config", "status", "current_iteration", "max_iterations", "best_strategy_id", "best_result", "termination_reason", "created_at", "updated_at", "completed_at")
@@ -193,3 +198,23 @@ class ListOptimizationRunsResponse(_message.Message):
     runs: _containers.RepeatedCompositeFieldContainer[OptimizationRun]
     pagination: _common_pb2.PaginationResponse
     def __init__(self, runs: _Optional[_Iterable[_Union[OptimizationRun, _Mapping]]] = ..., pagination: _Optional[_Union[_common_pb2.PaginationResponse, _Mapping]] = ...) -> None: ...
+
+class UpdateIterationResultRequest(_message.Message):
+    __slots__ = ("iteration_id", "result_id")
+    ITERATION_ID_FIELD_NUMBER: _ClassVar[int]
+    RESULT_ID_FIELD_NUMBER: _ClassVar[int]
+    iteration_id: str
+    result_id: str
+    def __init__(self, iteration_id: _Optional[str] = ..., result_id: _Optional[str] = ...) -> None: ...
+
+class UpdateIterationFeedbackRequest(_message.Message):
+    __slots__ = ("iteration_id", "engineer_changes", "analyst_feedback", "approval")
+    ITERATION_ID_FIELD_NUMBER: _ClassVar[int]
+    ENGINEER_CHANGES_FIELD_NUMBER: _ClassVar[int]
+    ANALYST_FEEDBACK_FIELD_NUMBER: _ClassVar[int]
+    APPROVAL_FIELD_NUMBER: _ClassVar[int]
+    iteration_id: str
+    engineer_changes: str
+    analyst_feedback: str
+    approval: _common_pb2.ApprovalStatus
+    def __init__(self, iteration_id: _Optional[str] = ..., engineer_changes: _Optional[str] = ..., analyst_feedback: _Optional[str] = ..., approval: _Optional[_Union[_common_pb2.ApprovalStatus, str]] = ...) -> None: ...

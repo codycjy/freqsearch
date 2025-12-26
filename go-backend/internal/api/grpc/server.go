@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
@@ -15,9 +16,11 @@ import (
 	"google.golang.org/grpc"
 	grpccodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/saltfish/freqsearch/go-backend/internal/db/repository"
 	"github.com/saltfish/freqsearch/go-backend/internal/domain"
+	"github.com/saltfish/freqsearch/go-backend/internal/events"
 	"github.com/saltfish/freqsearch/go-backend/internal/scheduler"
 	pb "github.com/saltfish/freqsearch/go-backend/pkg/pb/freqsearch/v1"
 )
@@ -26,10 +29,11 @@ import (
 type Server struct {
 	pb.UnimplementedFreqSearchServiceServer
 
-	repos     *repository.Repositories
-	scheduler *scheduler.Scheduler
-	logger    *zap.Logger
-	tracer    trace.Tracer
+	repos          *repository.Repositories
+	scheduler      *scheduler.Scheduler
+	eventPublisher events.Publisher
+	logger         *zap.Logger
+	tracer         trace.Tracer
 
 	grpcServer *grpc.Server
 }
@@ -38,13 +42,15 @@ type Server struct {
 func NewServer(
 	repos *repository.Repositories,
 	sched *scheduler.Scheduler,
+	eventPublisher events.Publisher,
 	logger *zap.Logger,
 ) *Server {
 	return &Server{
-		repos:     repos,
-		scheduler: sched,
-		logger:    logger,
-		tracer:    otel.Tracer("freqsearch.grpc"),
+		repos:          repos,
+		scheduler:      sched,
+		eventPublisher: eventPublisher,
+		logger:         logger,
+		tracer:         otel.Tracer("freqsearch.grpc"),
 	}
 }
 
@@ -71,10 +77,24 @@ func (s *Server) Stop() {
 
 // CreateStrategy creates a new strategy.
 func (s *Server) CreateStrategy(ctx context.Context, req *pb.CreateStrategyRequest) (*pb.CreateStrategyResponse, error) {
+	// Sanitize strategy name to ensure valid Python class name
+	sanitizedName := domain.SanitizeStrategyName(req.Name)
+
+	// Also fix class name in code if it doesn't match
+	code := req.Code
+	if sanitizedName != req.Name {
+		// Replace class definition with sanitized name
+		code = strings.Replace(code, "class "+req.Name+"(", "class "+sanitizedName+"(", 1)
+		s.logger.Info("Sanitized strategy name",
+			zap.String("original", req.Name),
+			zap.String("sanitized", sanitizedName),
+		)
+	}
+
 	strategy := &domain.Strategy{
 		ID:          uuid.New(),
-		Name:        req.Name,
-		Code:        req.Code,
+		Name:        sanitizedName,
+		Code:        code,
 		Description: req.Description,
 	}
 
@@ -154,6 +174,11 @@ func (s *Server) SubmitBacktest(ctx context.Context, req *pb.SubmitBacktestReque
 		return nil, status.Errorf(grpccodes.Internal, "failed to create job")
 	}
 
+	// Publish task created event
+	if err := s.eventPublisher.PublishTaskCreated(job); err != nil {
+		s.logger.Warn("Failed to publish task created event", zap.Error(err), zap.String("job_id", job.ID.String()))
+	}
+
 	return &pb.SubmitBacktestResponse{
 		Job: domainJobToProto(job),
 	}, nil
@@ -214,6 +239,14 @@ func (s *Server) CancelBacktest(ctx context.Context, req *pb.CancelBacktestReque
 			return nil, status.Errorf(grpccodes.FailedPrecondition, "job cannot be cancelled")
 		}
 		return nil, status.Errorf(grpccodes.Internal, "failed to cancel job")
+	}
+
+	// Fetch the cancelled job and publish event
+	job, err := s.repos.BacktestJob.GetByID(ctx, id)
+	if err == nil {
+		if err := s.eventPublisher.PublishTaskCancelled(job); err != nil {
+			s.logger.Warn("Failed to publish task cancelled event", zap.Error(err), zap.String("job_id", id.String()))
+		}
 	}
 
 	return &pb.CancelBacktestResponse{}, nil
@@ -343,6 +376,13 @@ func (s *Server) SubmitBatchBacktest(ctx context.Context, req *pb.SubmitBatchBac
 		return nil, status.Errorf(grpccodes.Internal, "failed to create batch jobs")
 	}
 
+	// Publish task created events for each job
+	for _, job := range jobs {
+		if err := s.eventPublisher.PublishTaskCreated(job); err != nil {
+			s.logger.Warn("Failed to publish task created event", zap.Error(err), zap.String("job_id", job.ID.String()))
+		}
+	}
+
 	protoJobs := make([]*pb.BacktestJob, len(jobs))
 	for i, job := range jobs {
 		protoJobs[i] = domainJobToProto(job)
@@ -414,6 +454,11 @@ func (s *Server) StartOptimization(ctx context.Context, req *pb.StartOptimizatio
 		return nil, status.Errorf(grpccodes.Internal, "failed to create optimization run")
 	}
 
+	// Publish optimization started event
+	if err := s.eventPublisher.PublishOptimizationStarted(run); err != nil {
+		s.logger.Warn("Failed to publish optimization started event", zap.Error(err), zap.String("run_id", run.ID.String()))
+	}
+
 	return &pb.StartOptimizationResponse{
 		Run: domainOptRunToProto(run),
 	}, nil
@@ -456,6 +501,19 @@ func (s *Server) GetOptimizationRun(ctx context.Context, req *pb.GetOptimization
 	protoIterations := make([]*pb.OptimizationIteration, len(iterations))
 	for i, iter := range iterations {
 		protoIterations[i] = domainIterationToProto(iter)
+
+		// Populate result if available
+		if iter.ResultID != nil {
+			result, err := s.repos.Result.GetByID(ctx, *iter.ResultID)
+			if err != nil {
+				s.logger.Warn("Failed to load result for iteration",
+					zap.Error(err),
+					zap.String("iteration_id", iter.ID.String()),
+					zap.String("result_id", iter.ResultID.String()))
+			} else {
+				protoIterations[i].Result = domainResultToProto(result)
+			}
+		}
 	}
 
 	return &pb.GetOptimizationRunResponse{
@@ -481,6 +539,20 @@ func (s *Server) ControlOptimization(ctx context.Context, req *pb.ControlOptimiz
 		attribute.String("action", req.Action.String()),
 	)
 
+	// Get current status before updating
+	oldRun, err := s.repos.Optimization.GetByID(ctx, runID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			span.SetStatus(codes.Error, "optimization run not found")
+			return nil, status.Errorf(grpccodes.NotFound, "optimization run not found")
+		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to get optimization run")
+		s.logger.Error("Failed to get optimization run", zap.Error(err))
+		return nil, status.Errorf(grpccodes.Internal, "failed to get optimization run")
+	}
+	oldStatus := oldRun.Status.String()
+
 	var newStatus domain.OptimizationStatus
 	switch req.Action {
 	case pb.OptimizationAction_OPTIMIZATION_ACTION_PAUSE:
@@ -489,6 +561,10 @@ func (s *Server) ControlOptimization(ctx context.Context, req *pb.ControlOptimiz
 		newStatus = domain.OptimizationStatusRunning
 	case pb.OptimizationAction_OPTIMIZATION_ACTION_CANCEL:
 		newStatus = domain.OptimizationStatusCancelled
+	case pb.OptimizationAction_OPTIMIZATION_ACTION_COMPLETE:
+		newStatus = domain.OptimizationStatusCompleted
+	case pb.OptimizationAction_OPTIMIZATION_ACTION_FAIL:
+		newStatus = domain.OptimizationStatusFailed
 	default:
 		span.SetStatus(codes.Error, "invalid action")
 		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid action")
@@ -511,6 +587,15 @@ func (s *Server) ControlOptimization(ctx context.Context, req *pb.ControlOptimiz
 		span.SetStatus(codes.Error, "failed to get updated run")
 		s.logger.Error("Failed to get optimization run after control", zap.Error(err))
 		return nil, status.Errorf(grpccodes.Internal, "failed to get optimization run")
+	}
+
+	// Publish optimization status changed event
+	if err := s.eventPublisher.PublishOptimizationStatusChanged(run, oldStatus, newStatus.String()); err != nil {
+		s.logger.Warn("Failed to publish optimization status changed event",
+			zap.Error(err),
+			zap.String("run_id", run.ID.String()),
+			zap.String("old_status", oldStatus),
+			zap.String("new_status", newStatus.String()))
 	}
 
 	return &pb.ControlOptimizationResponse{
@@ -573,6 +658,77 @@ func (s *Server) ListOptimizationRuns(ctx context.Context, req *pb.ListOptimizat
 		Runs:       protoRuns,
 		Pagination: pagination,
 	}, nil
+}
+
+// UpdateIterationResult updates the result ID for an optimization iteration.
+func (s *Server) UpdateIterationResult(ctx context.Context, req *pb.UpdateIterationResultRequest) (*emptypb.Empty, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.UpdateIterationResult")
+	defer span.End()
+
+	iterID, err := uuid.Parse(req.IterationId)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid iteration_id")
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid iteration_id: %v", err)
+	}
+
+	resultID, err := uuid.Parse(req.ResultId)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid result_id")
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid result_id: %v", err)
+	}
+
+	span.SetAttributes(
+		attribute.String("iteration_id", iterID.String()),
+		attribute.String("result_id", resultID.String()),
+	)
+
+	if err := s.repos.Optimization.UpdateIterationResult(ctx, iterID, resultID); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			span.SetStatus(codes.Error, "iteration not found")
+			return nil, status.Errorf(grpccodes.NotFound, "iteration not found")
+		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to update iteration result")
+		s.logger.Error("Failed to update iteration result", zap.Error(err), zap.String("iteration_id", iterID.String()))
+		return nil, status.Errorf(grpccodes.Internal, "failed to update iteration result")
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+// UpdateIterationFeedback updates the engineer changes and analyst feedback for an optimization iteration.
+func (s *Server) UpdateIterationFeedback(ctx context.Context, req *pb.UpdateIterationFeedbackRequest) (*emptypb.Empty, error) {
+	ctx, span := s.tracer.Start(ctx, "FreqSearchService.UpdateIterationFeedback")
+	defer span.End()
+
+	iterID, err := uuid.Parse(req.IterationId)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid iteration_id")
+		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid iteration_id: %v", err)
+	}
+
+	span.SetAttributes(
+		attribute.String("iteration_id", iterID.String()),
+		attribute.String("approval", req.Approval.String()),
+	)
+
+	approval := domain.ApprovalStatus(req.Approval.String())
+
+	if err := s.repos.Optimization.UpdateIterationFeedback(ctx, iterID, req.EngineerChanges, req.AnalystFeedback, approval); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			span.SetStatus(codes.Error, "iteration not found")
+			return nil, status.Errorf(grpccodes.NotFound, "iteration not found")
+		}
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to update iteration feedback")
+		s.logger.Error("Failed to update iteration feedback", zap.Error(err), zap.String("iteration_id", iterID.String()))
+		return nil, status.Errorf(grpccodes.Internal, "failed to update iteration feedback")
+	}
+
+	return &emptypb.Empty{}, nil
 }
 
 // HealthCheck performs a health check.

@@ -37,9 +37,6 @@ export const OptimizationList = () => {
       pageSize: 20,
     },
     liveMode: 'auto',
-    onLiveEvent: (event) => {
-      console.log('Live event received:', event);
-    },
   });
 
   const handleControlSuccess = () => {
@@ -123,7 +120,7 @@ export const OptimizationList = () => {
     },
     {
       title: 'Best Sharpe',
-      dataIndex: 'best_sharpe',
+      dataIndex: ['best_result', 'sharpe_ratio'],
       key: 'best_sharpe',
       render: (sharpe?: number) => (
         <Text strong style={{ color: sharpe && sharpe > 0 ? '#52c41a' : undefined }}>

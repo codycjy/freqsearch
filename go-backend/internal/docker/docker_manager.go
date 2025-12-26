@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,6 +19,20 @@ import (
 
 	"github.com/saltfish/freqsearch/go-backend/internal/config"
 )
+
+// toAbsolutePath converts a relative path to absolute path.
+// If the path is already absolute, it returns as-is.
+func toAbsolutePath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		return path // fallback to original
+	}
+	return filepath.Join(cwd, path)
+}
 
 const (
 	// Label keys for container management
@@ -86,17 +102,32 @@ func (m *dockerManager) RunBacktest(ctx context.Context, params *RunBacktestPara
 	// 3. Build timerange
 	timerange := params.Config.Timerange()
 
-	// 4. Create container
+	// 4. Transform pairs for futures trading mode and build pairs string
+	// Futures pairs need format: "BTC/USDT:USDT" instead of "BTC/USDT"
+	pairs := params.Config.Pairs
+	if params.Config.GetTradingMode() == "futures" {
+		pairs = transformPairsForFutures(pairs, "USDT")
+	}
+	pairsArg := strings.Join(pairs, " ")
+
+	// 5. Create container with download + backtest command
+	// First download data, then run backtest
+	downloadCmd := fmt.Sprintf(
+		"freqtrade download-data --config /freqtrade/config.json --pairs %s --timeframes %s --timerange %s --trading-mode futures || true",
+		pairsArg,
+		params.Config.Timeframe,
+		timerange,
+	)
+	backtestCmd := fmt.Sprintf(
+		"freqtrade backtesting --strategy %s --config /freqtrade/config.json --timerange %s --export none",
+		params.StrategyName,
+		timerange,
+	)
+
 	containerConfig := &container.Config{
-		Image: m.config.Image,
-		Cmd: []string{
-			"backtesting",
-			"--strategy", params.StrategyName,
-			"--config", "/freqtrade/config.json",
-			"--datadir", "/freqtrade/user_data/data",
-			"--timerange", timerange,
-			"--export", "none",
-		},
+		Image:      m.config.Image,
+		Entrypoint: []string{"/bin/sh", "-c"},
+		Cmd:        []string{downloadCmd + " && " + backtestCmd},
 		Labels: map[string]string{
 			labelJobID:   params.JobID.String(),
 			labelManaged: "true",
@@ -106,11 +137,12 @@ func (m *dockerManager) RunBacktest(ctx context.Context, params *RunBacktestPara
 		},
 	}
 
-	// 5. Configure host settings
+	// 6. Configure host settings (convert relative paths to absolute)
+	dataMount := toAbsolutePath(m.config.DataMount)
 	hostConfig := &container.HostConfig{
 		Binds: []string{
-			m.config.DataMount + ":/freqtrade/user_data/data:ro",
-			strategyResult.StrategyPath + ":/freqtrade/user_data/strategies/" + params.StrategyName + ".py:ro",
+			dataMount + ":/freqtrade/user_data/data:rw", // rw needed for leverage_tiers cache and download
+			strategyResult.StrategyPath + ":/freqtrade/user_data/strategies/" + params.StrategyName + ".py:rw",
 			configResult.ConfigPath + ":/freqtrade/config.json:ro",
 		},
 		Resources: container.Resources{

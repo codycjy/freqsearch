@@ -168,16 +168,18 @@ func (w *Worker) processJob(ctx context.Context, job *domain.BacktestJob) *JobRe
 		w.logger.Warn("Container exited with non-zero code",
 			zap.String("job_id", job.ID.String()),
 			zap.Int64("exit_code", exitCode),
+			zap.String("logs", logs),
 		)
 
 		// Try to extract error from logs
-		if len(logs) > 500 {
-			logs = logs[len(logs)-500:]
+		if len(logs) > 2000 {
+			logs = logs[len(logs)-2000:]
 		}
 		return &JobResult{
 			Job:     job,
 			Success: false,
 			Error:   ErrStrategyCodeError,
+			Logs:    logs,
 		}
 	}
 

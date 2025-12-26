@@ -230,6 +230,7 @@ export interface OptimizationRun {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  iterations?: OptimizationIteration[];
 }
 
 export interface OptimizationIteration {

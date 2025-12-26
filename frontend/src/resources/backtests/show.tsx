@@ -14,6 +14,7 @@ import {
   Statistic,
   Button,
   Divider,
+  Collapse,
 } from 'antd';
 import {
   ArrowUpOutlined,
@@ -24,7 +25,7 @@ import type { BacktestJob, BacktestResult, JobStatus } from '@providers/types';
 import { ProfitCurve } from '@components/charts/ProfitCurve';
 import { DrawdownChart } from '@components/charts/DrawdownChart';
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 /**
  * Status color mapping
@@ -50,19 +51,31 @@ const STATUS_TEXT: Record<JobStatus, string> = {
 /**
  * Format percentage value
  */
-const formatPercent = (value: number): string => {
+const formatPercent = (value: number | undefined | null): string => {
+  if (value === undefined || value === null) return 'N/A';
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 };
 
 /**
  * Format currency value
  */
-const formatCurrency = (value: number): string => {
+const formatCurrency = (value: number | undefined | null): string => {
+  if (value === undefined || value === null) return 'N/A';
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 2,
   }).format(value);
+};
+
+/**
+ * Format duration in minutes to hours and minutes
+ */
+const formatDuration = (minutes: number | undefined | null): string => {
+  if (minutes === undefined || minutes === null) return 'N/A';
+  const hours = Math.floor(minutes / 60);
+  const mins = Math.floor(minutes % 60);
+  return `${hours}h ${mins}m`;
 };
 
 /**
@@ -285,8 +298,7 @@ export const BacktestShow: React.FC = () => {
                 <Col span={24} md={12}>
                   <Descriptions column={1} size="small">
                     <Descriptions.Item label="Avg Trade Duration">
-                      {Math.floor(result.avg_trade_duration_minutes / 60)}h{' '}
-                      {Math.floor(result.avg_trade_duration_minutes % 60)}m
+                      {formatDuration(result.avg_trade_duration_minutes)}
                     </Descriptions.Item>
                     <Descriptions.Item label="Avg Profit/Trade">
                       {formatCurrency(result.avg_profit_per_trade)}
@@ -354,16 +366,14 @@ export const BacktestShow: React.FC = () => {
                     dataIndex="win_rate"
                     title="Win Rate"
                     align="right"
-                    render={(value: number) => `${value.toFixed(2)}%`}
-                    sorter={(a, b) => a.win_rate - b.win_rate}
+                    render={(value: number) => value != null ? `${value.toFixed(2)}%` : 'N/A'}
+                    sorter={(a, b) => (a.win_rate ?? 0) - (b.win_rate ?? 0)}
                   />
                   <Table.Column
                     dataIndex="avg_duration_minutes"
                     title="Avg Duration"
                     align="right"
-                    render={(value: number) =>
-                      `${Math.floor(value / 60)}h ${Math.floor(value % 60)}m`
-                    }
+                    render={(value: number) => formatDuration(value)}
                   />
                 </Table>
               </Card>
@@ -376,8 +386,9 @@ export const BacktestShow: React.FC = () => {
                   dataSource={trades}
                   rowKey={(record, index) => `${record.pair}-${index}`}
                   pagination={{
-                    defaultPageSize: 10,
+                    pageSize: 20,
                     showSizeChanger: true,
+                    pageSizeOptions: ['10', '20', '50', '100'],
                     showTotal: (total) => `Total ${total} trades`,
                   }}
                   size="small"
@@ -484,14 +495,36 @@ export const BacktestShow: React.FC = () => {
           </Card>
         )}
 
-        {/* Raw Log - Only show if there's an error or if explicitly requested */}
-        {result?.raw_log && job?.status === 'JOB_STATUS_FAILED' && (
-          <Card title="Execution Log">
-            <Paragraph>
-              <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: 12 }}>
-                {result.raw_log}
-              </pre>
-            </Paragraph>
+        {/* Error Information - Show for failed backtests */}
+        {job?.status === 'JOB_STATUS_FAILED' && (
+          <Card title="Error Details" style={{ marginTop: 16 }}>
+            {job?.error_message && (
+              <Alert
+                type="error"
+                message="Backtest Failed"
+                description={job.error_message}
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {!job?.error_message && !result?.raw_log && (
+              <Alert
+                type="error"
+                message="Backtest Failed"
+                description="The backtest job failed but no error details are available. This might indicate a system-level issue or timeout."
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {result?.raw_log && (
+              <Collapse>
+                <Collapse.Panel header="Raw Execution Log" key="log">
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, maxHeight: 400, overflow: 'auto' }}>
+                    {result.raw_log}
+                  </pre>
+                </Collapse.Panel>
+              </Collapse>
+            )}
           </Card>
         )}
       </Space>

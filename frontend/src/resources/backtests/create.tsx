@@ -60,10 +60,11 @@ const TIMEFRAMES = [
  */
 const EXCHANGES = [
   { label: 'Binance', value: 'binance' },
+  { label: 'Bybit', value: 'bybit' },
+  { label: 'OKX', value: 'okx' },
   { label: 'Coinbase Pro', value: 'coinbasepro' },
   { label: 'Kraken', value: 'kraken' },
   { label: 'Bitfinex', value: 'bitfinex' },
-  { label: 'FTX', value: 'ftx' },
 ];
 
 /**
@@ -211,7 +212,7 @@ export const BacktestCreate: React.FC = () => {
         layout="vertical"
         onFinish={handleSubmit}
         initialValues={{
-          exchange: 'binance',
+          exchange: 'bybit',
           timeframe: '1h',
           priority: 3,
           dry_run_wallet: 10000,

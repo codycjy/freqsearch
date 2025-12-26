@@ -14,7 +14,7 @@ from .config import get_settings
 from .agents.scout import run_scout
 from .agents.engineer import run_engineer
 from .agents.analyst import run_analyst
-from .core.messaging import message_broker, Events, publish_event
+from .core.messaging import message_broker, Events, publish_event, get_broker
 
 # Configure standard library logging level
 logging.basicConfig(
@@ -192,8 +192,6 @@ def serve(
     heartbeat_interval: int = typer.Option(15, help="Heartbeat interval in seconds"),
 ):
     """Start agents as message queue consumers."""
-    from .core.messaging import Events, get_broker
-
     console.print("[bold blue]Starting Agent Service[/bold blue]")
     console.print(f"Scout: {scout_enabled}, Engineer: {engineer_enabled}, Analyst: {analyst_enabled}")
     console.print(f"Heartbeat interval: {heartbeat_interval}s")
@@ -321,6 +319,35 @@ def serve(
 
         # Always start orchestrator heartbeat
         tasks.append(asyncio.create_task(heartbeat_task("orchestrator")))
+
+        # Subscribe to optimization.started
+        async def handle_optimization_trigger(data):
+            """Handle optimization.started events from Go backend."""
+            agent_tasks["orchestrator"] = f"Optimizing: {data.get('base_strategy_id')}"
+            console.print(f"[cyan]Starting optimization: {data.get('optimization_run_id')}[/cyan]")
+            try:
+                from freqsearch_agents.agents.orchestrator.agent import run_orchestrator
+                await run_orchestrator(
+                    optimization_run_id=data["optimization_run_id"],
+                    base_strategy_id=data["base_strategy_id"],
+                    max_iterations=data.get("max_iterations", 10),
+                    config=data.get("config", {}),
+                )
+            except Exception as e:
+                console.print(f"[red]Orchestrator error: {e}[/red]")
+                logger.exception("Orchestrator failed")
+            finally:
+                agent_tasks["orchestrator"] = None
+
+        tasks.append(
+            asyncio.create_task(
+                broker.subscribe(
+                    Events.OPTIMIZATION_STARTED,
+                    "orchestrator-queue",
+                    handle_optimization_trigger,
+                )
+            )
+        )
 
         console.print("[green]Agent service started. Press Ctrl+C to stop.[/green]")
 

@@ -93,7 +93,7 @@ func Default() *Config {
 		Env: "development",
 		GoBackend: GoBackendConfig{
 			GRPCPort: 50051,
-			HTTPPort: 8082,
+			HTTPPort: 8083,
 			Database: DatabaseConfig{
 				Host:               "localhost",
 				Port:               5432,
@@ -120,10 +120,10 @@ func Default() *Config {
 				ShutdownTimeout:        "30s",
 			},
 			Docker: DockerConfig{
-				Image:            "freqtradeorg/freqtrade:stable",
+				Image:            "freqtradeorg/freqtrade:2025.4_freqai",
 				Network:          "freqsearch_network",
-				DataMount:        "/data/market",
-				StrategyMount:    "/data/strategies",
+				DataMount:        "./data/market",
+				StrategyMount:    "./data/strategies",
 				ConfigMount:      "/tmp/freqsearch/configs",
 				CPULimit:         "2.0",
 				MemoryLimit:      "2g",

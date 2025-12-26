@@ -232,6 +232,7 @@ async def run_orchestrator(
         "optimization_run_id": optimization_run_id,
         "base_strategy_id": base_strategy_id,
         "current_strategy_id": base_strategy_id,
+        "optimization_config": config or {},  # Full config including backtest_config
         "current_iteration": 0,
         "max_iterations": max_iterations,
         "best_strategy_id": None,
@@ -239,6 +240,7 @@ async def run_orchestrator(
         "best_sharpe": float("-inf"),
         "current_backtest_job_id": None,
         "current_result": None,
+        "engineer_result": None,
         "analyst_decision": None,
         "analyst_feedback": None,
         "terminated": False,
@@ -334,6 +336,7 @@ async def run_orchestrator_streaming(
         "optimization_run_id": optimization_run_id,
         "base_strategy_id": base_strategy_id,
         "current_strategy_id": base_strategy_id,
+        "optimization_config": config or {},  # Full config including backtest_config
         "current_iteration": 0,
         "max_iterations": max_iterations,
         "best_strategy_id": None,
@@ -341,6 +344,7 @@ async def run_orchestrator_streaming(
         "best_sharpe": float("-inf"),
         "current_backtest_job_id": None,
         "current_result": None,
+        "engineer_result": None,
         "analyst_decision": None,
         "analyst_feedback": None,
         "terminated": False,

@@ -8,9 +8,23 @@ import {
 } from '@refinedev/antd';
 import { Table, Space, Typography, Tag, Input } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
-import type { StrategyWithMetrics } from '@providers/types';
+import type { Strategy } from '@providers/types';
 
 const { Text } = Typography;
+
+/**
+ * Extended strategy type with best_result from API
+ */
+interface StrategyWithBestResult extends Strategy {
+  best_result?: {
+    sharpe_ratio: number;
+    profit_pct: number;
+    max_drawdown_pct: number;
+    total_trades: number;
+    win_rate: number;
+    backtest_count: number;
+  };
+}
 
 /**
  * StrategyList Component
@@ -23,7 +37,7 @@ const { Text } = Typography;
  * Uses Refine's useTable hook with Ant Design Table
  */
 export const StrategyList: React.FC = () => {
-  const { tableProps, searchFormProps } = useTable<StrategyWithMetrics>({
+  const { tableProps, searchFormProps } = useTable<StrategyWithBestResult>({
     resource: 'strategies',
     syncWithLocation: true,
     onSearch: (values: any) => {
@@ -78,16 +92,16 @@ export const StrategyList: React.FC = () => {
 
       <Table {...tableProps} rowKey="id">
         <Table.Column
-          dataIndex={['strategy', 'name']}
+          dataIndex="name"
           title="Name"
           sorter
-          render={(_, record: StrategyWithMetrics) => (
+          render={(_, record: StrategyWithBestResult) => (
             <div>
-              <Text strong>{record.strategy.name}</Text>
-              {record.strategy.parent_id && (
+              <Text strong>{record.name}</Text>
+              {record.parent_id && (
                 <div>
                   <Tag color="blue" style={{ fontSize: '11px', marginTop: 4 }}>
-                    Gen {record.strategy.generation}
+                    Gen {record.generation}
                   </Tag>
                 </div>
               )}
@@ -96,7 +110,7 @@ export const StrategyList: React.FC = () => {
         />
 
         <Table.Column
-          dataIndex={['strategy', 'description']}
+          dataIndex="description"
           title="Description"
           ellipsis
           render={(value) => (
@@ -159,14 +173,14 @@ export const StrategyList: React.FC = () => {
         />
 
         <Table.Column
-          dataIndex="backtest_count"
+          dataIndex={['best_result', 'backtest_count']}
           title="Backtests"
           align="right"
           render={(value) => <Tag color="blue">{value || 0}</Tag>}
         />
 
         <Table.Column
-          dataIndex={['strategy', 'created_at']}
+          dataIndex="created_at"
           title="Created"
           sorter
           render={(value) => (
@@ -179,22 +193,22 @@ export const StrategyList: React.FC = () => {
         <Table.Column
           title="Actions"
           dataIndex="actions"
-          render={(_, record: StrategyWithMetrics) => (
+          render={(_, record: StrategyWithBestResult) => (
             <Space>
               <ShowButton
                 hideText
                 size="small"
-                recordItemId={record.strategy.id}
+                recordItemId={record.id}
               />
               <EditButton
                 hideText
                 size="small"
-                recordItemId={record.strategy.id}
+                recordItemId={record.id}
               />
               <DeleteButton
                 hideText
                 size="small"
-                recordItemId={record.strategy.id}
+                recordItemId={record.id}
               />
             </Space>
           )}

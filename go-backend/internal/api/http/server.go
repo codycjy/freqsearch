@@ -130,6 +130,8 @@ func (s *Server) setupAPIRoutes(mux *http.ServeMux) {
 			switch r.Method {
 			case http.MethodGet:
 				s.handler.HandleGetStrategy(w, r)
+			case http.MethodPut:
+				s.handler.HandleUpdateStrategy(w, r)
 			case http.MethodDelete:
 				s.handler.HandleDeleteStrategy(w, r)
 			default:

@@ -5,6 +5,7 @@ package freqsearch.v1;
 option go_package = "github.com/saltfish/freqsearch/go-backend/pkg/pb/freqsearch/v1;freqsearchv1";
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
 import "freqsearch/v1/common.proto";
 import "freqsearch/v1/strategy.proto";
 import "freqsearch/v1/backtest.proto";
@@ -108,6 +109,8 @@ enum OptimizationAction {
   OPTIMIZATION_ACTION_PAUSE = 1;
   OPTIMIZATION_ACTION_RESUME = 2;
   OPTIMIZATION_ACTION_CANCEL = 3;
+  OPTIMIZATION_ACTION_COMPLETE = 4;
+  OPTIMIZATION_ACTION_FAIL = 5;
 }
 
 message ControlOptimizationResponse {
@@ -124,6 +127,18 @@ message ListOptimizationRunsRequest {
 message ListOptimizationRunsResponse {
   repeated OptimizationRun runs = 1;
   PaginationResponse pagination = 2;
+}
+
+message UpdateIterationResultRequest {
+  string iteration_id = 1;
+  string result_id = 2;
+}
+
+message UpdateIterationFeedbackRequest {
+  string iteration_id = 1;
+  string engineer_changes = 2;
+  string analyst_feedback = 3;
+  ApprovalStatus approval = 4;
 }
 
 // ----- Main Service Definition -----
@@ -182,6 +197,12 @@ service FreqSearchService {
 
   // List optimization runs
   rpc ListOptimizationRuns(ListOptimizationRunsRequest) returns (ListOptimizationRunsResponse);
+
+  // Update iteration result
+  rpc UpdateIterationResult(UpdateIterationResultRequest) returns (google.protobuf.Empty);
+
+  // Update iteration feedback
+  rpc UpdateIterationFeedback(UpdateIterationFeedbackRequest) returns (google.protobuf.Empty);
 
   // ===== Health =====
 

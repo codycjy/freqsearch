@@ -1,4 +1,4 @@
-import { useShow, useCustom, useNavigation } from '@refinedev/core';
+import { useShow, useNavigation } from '@refinedev/core';
 import { Show, DateField } from '@refinedev/antd';
 import {
   Typography,
@@ -52,17 +52,9 @@ export const OptimizationShow = () => {
   const record = data?.data;
   const { show } = useNavigation();
 
-  const { data: iterationsData, isLoading: iterationsLoading } = useCustom<{
-    iterations: OptimizationIteration[];
-  }>({
-    url: `optimizations/${record?.id}/iterations`,
-    method: 'get',
-    queryOptions: {
-      enabled: !!record?.id,
-    },
-  });
-
-  const iterations = iterationsData?.data?.iterations || [];
+  // Use iterations from the record (populated by dataProvider)
+  const iterations = record?.iterations || [];
+  const iterationsLoading = queryResult.isLoading;
 
   if (isLoading || !record) {
     return (

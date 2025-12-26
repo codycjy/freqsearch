@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,13 @@ func (r *backtestResultRepo) Create(ctx context.Context, result *domain.Backtest
 	pairResultsJSON, err := json.Marshal(result.PairResults)
 	if err != nil {
 		return fmt.Errorf("failed to marshal pair_results: %w", err)
+	}
+
+	// Encode RawLog as base64 for TEXT column storage (gzip data is binary)
+	var rawLogEncoded *string
+	if len(result.RawLog) > 0 {
+		encoded := base64.StdEncoding.EncodeToString(result.RawLog)
+		rawLogEncoded = &encoded
 	}
 
 	query := `
@@ -70,7 +78,7 @@ func (r *backtestResultRepo) Create(ctx context.Context, result *domain.Backtest
 		result.BestTradePct,
 		result.WorstTradePct,
 		pairResultsJSON,
-		result.RawLog,
+		rawLogEncoded,
 		result.CreatedAt,
 	)
 	if err != nil {
@@ -295,6 +303,7 @@ func (r *backtestResultRepo) GetBestByStrategyID(ctx context.Context, strategyID
 func (r *backtestResultRepo) scanResult(row pgx.Row) (*domain.BacktestResult, error) {
 	result := &domain.BacktestResult{}
 	var pairResultsJSON []byte
+	var rawLogEncoded *string
 
 	err := row.Scan(
 		&result.ID,
@@ -317,7 +326,7 @@ func (r *backtestResultRepo) scanResult(row pgx.Row) (*domain.BacktestResult, er
 		&result.BestTradePct,
 		&result.WorstTradePct,
 		&pairResultsJSON,
-		&result.RawLog,
+		&rawLogEncoded,
 		&result.CreatedAt,
 	)
 	if err != nil {
@@ -333,6 +342,14 @@ func (r *backtestResultRepo) scanResult(row pgx.Row) (*domain.BacktestResult, er
 		}
 	}
 
+	// Decode base64-encoded RawLog
+	if rawLogEncoded != nil && *rawLogEncoded != "" {
+		decoded, err := base64.StdEncoding.DecodeString(*rawLogEncoded)
+		if err == nil {
+			result.RawLog = decoded
+		}
+	}
+
 	return result, nil
 }
 
@@ -343,6 +360,7 @@ func (r *backtestResultRepo) scanResults(rows pgx.Rows) ([]*domain.BacktestResul
 	for rows.Next() {
 		result := &domain.BacktestResult{}
 		var pairResultsJSON []byte
+		var rawLogEncoded *string
 
 		err := rows.Scan(
 			&result.ID,
@@ -365,7 +383,7 @@ func (r *backtestResultRepo) scanResults(rows pgx.Rows) ([]*domain.BacktestResul
 			&result.BestTradePct,
 			&result.WorstTradePct,
 			&pairResultsJSON,
-			&result.RawLog,
+			&rawLogEncoded,
 			&result.CreatedAt,
 		)
 		if err != nil {
@@ -375,6 +393,14 @@ func (r *backtestResultRepo) scanResults(rows pgx.Rows) ([]*domain.BacktestResul
 		if pairResultsJSON != nil {
 			if err := json.Unmarshal(pairResultsJSON, &result.PairResults); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal pair_results: %w", err)
+			}
+		}
+
+		// Decode base64-encoded RawLog
+		if rawLogEncoded != nil && *rawLogEncoded != "" {
+			decoded, err := base64.StdEncoding.DecodeString(*rawLogEncoded)
+			if err == nil {
+				result.RawLog = decoded
 			}
 		}
 

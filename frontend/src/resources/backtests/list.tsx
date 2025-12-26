@@ -1,8 +1,8 @@
 import React from 'react';
-import { useNavigation } from '@refinedev/core';
+import { useNavigation, useDelete, useCustom, useCreate } from '@refinedev/core';
 import { List, useTable as useAntdTable, DateField } from '@refinedev/antd';
-import { Table, Space, Tag, Button, Select, Typography } from 'antd';
-import { EyeOutlined, StopOutlined } from '@ant-design/icons';
+import { Table, Space, Tag, Button, Select, Typography, Card, Statistic, Row, Col, Tooltip } from 'antd';
+import { EyeOutlined, StopOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import type { BacktestJob, JobStatus } from '@providers/types';
 
 const { Text } = Typography;
@@ -63,10 +63,29 @@ const calculateDuration = (start?: string, end?: string): string => {
  * - Actions to view details and cancel jobs
  * - Duration calculation
  */
+interface QueueStats {
+  pending_jobs: number;
+  running_jobs: number;
+  completed_today: number;
+  failed_today: number;
+  max_concurrent: number;
+}
+
 export const BacktestList: React.FC = () => {
   const { show } = useNavigation();
+  const { mutate: cancelBacktest } = useDelete();
+  const { mutate: createBacktest } = useCreate();
 
-  const { tableProps, setFilters } = useAntdTable<BacktestJob>({
+  // Fetch queue stats
+  const { data: queueStats, isLoading: queueLoading, refetch: refetchQueue } = useCustom<QueueStats>({
+    url: '/backtests/queue/stats',
+    method: 'get',
+    queryOptions: {
+      refetchInterval: 5000, // Refresh every 5 seconds
+    },
+  });
+
+  const { tableProps, setFilters, tableQuery } = useAntdTable<BacktestJob>({
     resource: 'backtests',
     syncWithLocation: true,
     liveMode: 'auto', // Enable real-time updates
@@ -82,13 +101,95 @@ export const BacktestList: React.FC = () => {
 
   // Handle cancel action
   const handleCancel = async (id: string) => {
-    // TODO: Implement cancel API call
-    console.log('Cancel backtest:', id);
+    try {
+      cancelBacktest({
+        resource: 'backtests',
+        id: id,
+        successNotification: {
+          message: 'Backtest cancelled successfully',
+          type: 'success',
+        },
+        errorNotification: {
+          message: 'Failed to cancel backtest',
+          type: 'error',
+        },
+      });
+    } catch (error) {
+      console.error('Cancel error:', error);
+    }
   };
+
+  // Handle retry action - resubmit failed backtest with same config
+  const handleRetry = async (record: BacktestJob) => {
+    createBacktest({
+      resource: 'backtests',
+      values: {
+        strategy_id: record.strategy_id,
+        config: record.config,
+        priority: record.priority,
+      },
+      successNotification: {
+        message: 'Backtest resubmitted successfully',
+        type: 'success',
+      },
+      errorNotification: {
+        message: 'Failed to retry backtest',
+        type: 'error',
+      },
+    }, {
+      onSuccess: () => {
+        tableQuery.refetch();
+        refetchQueue();
+      },
+    });
+  };
+
+  const stats = queueStats?.data;
 
   return (
     <List>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        {/* Queue Stats Bar */}
+        <Card size="small" loading={queueLoading}>
+          <Row gutter={16}>
+            <Col span={4}>
+              <Statistic
+                title="Pending"
+                value={stats?.pending_jobs ?? 0}
+                valueStyle={{ color: '#1890ff' }}
+                prefix={<SyncOutlined spin={!!stats?.running_jobs} />}
+              />
+            </Col>
+            <Col span={4}>
+              <Statistic
+                title="Running"
+                value={stats?.running_jobs ?? 0}
+                suffix={`/ ${stats?.max_concurrent ?? 8}`}
+                valueStyle={{ color: '#fa8c16' }}
+              />
+            </Col>
+            <Col span={4}>
+              <Statistic
+                title="Completed Today"
+                value={stats?.completed_today ?? 0}
+                valueStyle={{ color: '#52c41a' }}
+              />
+            </Col>
+            <Col span={4}>
+              <Statistic
+                title="Failed Today"
+                value={stats?.failed_today ?? 0}
+                valueStyle={{ color: stats?.failed_today ? '#ff4d4f' : undefined }}
+              />
+            </Col>
+            <Col span={8} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+              <Button icon={<ReloadOutlined />} onClick={() => { tableQuery.refetch(); refetchQueue(); }}>
+                Refresh
+              </Button>
+            </Col>
+          </Row>
+        </Card>
+
         {/* Filters */}
         <Space>
           <Select
@@ -209,7 +310,7 @@ export const BacktestList: React.FC = () => {
           <Table.Column
             title="Actions"
             fixed="right"
-            width={150}
+            width={180}
             render={(_, record: BacktestJob) => (
               <Space>
                 <Button
@@ -231,6 +332,18 @@ export const BacktestList: React.FC = () => {
                   >
                     Cancel
                   </Button>
+                )}
+                {record.status === 'JOB_STATUS_FAILED' && (
+                  <Tooltip title="Retry with same config">
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      onClick={() => handleRetry(record)}
+                    >
+                      Retry
+                    </Button>
+                  </Tooltip>
                 )}
               </Space>
             )}
