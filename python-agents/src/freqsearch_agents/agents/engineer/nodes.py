@@ -269,21 +269,60 @@ def _extract_code_from_response(response: str) -> str:
     Returns:
         Extracted Python code
     """
-    # Check for markdown code block
+    import re
+
+    original_response = response
+    response = response.strip()
+
+    # Check for markdown code block with python tag
     if "```python" in response:
         start = response.find("```python") + len("```python")
         end = response.find("```", start)
         if end > start:
-            return response[start:end].strip()
+            code = response[start:end].strip()
+            logger.debug("Extracted code from ```python block", code_length=len(code))
+            return code
+        else:
+            # No closing ```, take everything after ```python
+            code = response[start:].strip()
+            # Remove any trailing ``` if present
+            code = re.sub(r'```\s*$', '', code).strip()
+            logger.debug("Extracted code from unclosed ```python block", code_length=len(code))
+            return code
 
+    # Check for generic code block
     if "```" in response:
         start = response.find("```") + 3
+        # Skip language identifier if present (e.g., ```py, ```Python)
+        newline_pos = response.find("\n", start)
+        if newline_pos != -1 and newline_pos - start < 20:  # Language tag is usually short
+            potential_lang = response[start:newline_pos].strip().lower()
+            if potential_lang in ("py", "python", "python3", ""):
+                start = newline_pos + 1
+
         end = response.find("```", start)
         if end > start:
-            return response[start:end].strip()
+            code = response[start:end].strip()
+            logger.debug("Extracted code from ``` block", code_length=len(code))
+            return code
+        else:
+            # No closing ```, take everything after opening
+            code = response[start:].strip()
+            code = re.sub(r'```\s*$', '', code).strip()
+            logger.debug("Extracted code from unclosed ``` block", code_length=len(code))
+            return code
 
-    # Return as-is if no code blocks
-    return response.strip()
+    # Strip any leading/trailing backticks that might remain
+    response = response.strip('`').strip()
+
+    # If response starts with common non-code patterns, log warning
+    if response.startswith(('Sure', 'Here', 'I ', 'The ', 'This')):
+        logger.warning(
+            "Response appears to contain explanation text, not code",
+            first_50_chars=response[:50],
+        )
+
+    return response
 
 
 async def validate_code_node(

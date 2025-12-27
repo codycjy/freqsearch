@@ -1,8 +1,10 @@
 package docker
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -18,6 +21,11 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/saltfish/freqsearch/go-backend/internal/config"
+)
+
+const (
+	// Validator image name
+	validatorImage = "freqsearch/strategy-validator:latest"
 )
 
 // toAbsolutePath converts a relative path to absolute path.
@@ -189,6 +197,236 @@ func (m *dockerManager) RunBacktest(ctx context.Context, params *RunBacktestPara
 	// Note: In production, these should be stored and called appropriately
 
 	return containerID, nil
+}
+
+// ValidateStrategy validates a strategy using the validator container.
+// This is much faster than running a full backtest as it only checks:
+// - Python syntax
+// - Import availability
+// - IStrategy class presence
+// - Required methods
+func (m *dockerManager) ValidateStrategy(ctx context.Context, params *ValidateStrategyParams) (*ValidationResult, error) {
+	// 1. Prepare strategy file
+	strategyResult, err := m.injector.InjectStrategy(params.StrategyCode, params.StrategyName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inject strategy: %w", err)
+	}
+	defer strategyResult.Cleanup()
+
+	// 2. Ensure validator image exists
+	if err := m.ensureValidatorImage(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ensure validator image: %w", err)
+	}
+
+	// 3. Create container config
+	containerConfig := &container.Config{
+		Image: validatorImage,
+		Cmd:   []string{"/strategy.py"},
+		Labels: map[string]string{
+			labelManaged: "true",
+		},
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds: []string{
+			strategyResult.StrategyPath + ":/strategy.py:ro",
+		},
+		Resources: container.Resources{
+			CPUQuota: 100000, // 1 CPU
+			Memory:   512 * 1024 * 1024, // 512 MB
+		},
+		NetworkMode: container.NetworkMode(m.config.Network),
+		AutoRemove:  true,
+	}
+
+	// 4. Create and start container
+	resp, err := m.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create validator container: %w", err)
+	}
+
+	containerID := resp.ID
+
+	if err := m.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		m.client.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+		return nil, fmt.Errorf("failed to start validator container: %w", err)
+	}
+
+	// 5. Wait for completion (with timeout)
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	statusCh, errCh := m.client.ContainerWait(waitCtx, containerID, container.WaitConditionNotRunning)
+
+	var logs string
+	select {
+	case err := <-errCh:
+		if err != nil {
+			return nil, fmt.Errorf("error waiting for validator: %w", err)
+		}
+	case <-statusCh:
+		logs, _ = m.GetContainerLogs(ctx, containerID)
+	case <-waitCtx.Done():
+		m.client.ContainerKill(ctx, containerID, "SIGKILL")
+		return nil, fmt.Errorf("validation timeout")
+	}
+
+	// 6. Parse JSON result from logs
+	var result ValidationResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(logs)), &result); err != nil {
+		// Fallback: treat logs as error message
+		return &ValidationResult{
+			Valid:  false,
+			Errors: []string{"Validation failed: " + logs},
+		}, nil
+	}
+
+	m.logger.Info("Strategy validation completed",
+		zap.String("strategy", params.StrategyName),
+		zap.Bool("valid", result.Valid),
+		zap.Strings("errors", result.Errors),
+	)
+
+	return &result, nil
+}
+
+// ensureValidatorImage ensures the validator image is available locally.
+// If not found, it will build the image automatically.
+func (m *dockerManager) ensureValidatorImage(ctx context.Context) error {
+	// Check if image exists
+	_, _, err := m.client.ImageInspectWithRaw(ctx, validatorImage)
+	if err == nil {
+		return nil // Image exists
+	}
+
+	if !client.IsErrNotFound(err) {
+		return fmt.Errorf("failed to check validator image: %w", err)
+	}
+
+	// Image not found - build it
+	m.logger.Info("Validator image not found, building...", zap.String("image", validatorImage))
+
+	return m.buildValidatorImage(ctx)
+}
+
+// buildValidatorImage builds the validator image from Dockerfile.
+func (m *dockerManager) buildValidatorImage(ctx context.Context) error {
+	// Get the docker directory path (relative to working directory)
+	dockerfilePath := "docker/freqtrade"
+
+	// Check if Dockerfile exists
+	dockerfileFullPath := filepath.Join(dockerfilePath, "Dockerfile")
+	if _, err := os.Stat(dockerfileFullPath); os.IsNotExist(err) {
+		return fmt.Errorf("Dockerfile not found at %s. Please ensure docker/freqtrade/Dockerfile exists", dockerfileFullPath)
+	}
+
+	// Create tar archive of the build context
+	buildCtx, err := createBuildContext(dockerfilePath)
+	if err != nil {
+		return fmt.Errorf("failed to create build context: %w", err)
+	}
+	defer buildCtx.Close()
+
+	// Build the image
+	buildOptions := types.ImageBuildOptions{
+		Tags:       []string{validatorImage},
+		Dockerfile: "Dockerfile",
+		Remove:     true,
+	}
+
+	resp, err := m.client.ImageBuild(ctx, buildCtx, buildOptions)
+	if err != nil {
+		return fmt.Errorf("failed to build validator image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Wait for build to complete and check for errors
+	var lastLine string
+	decoder := json.NewDecoder(resp.Body)
+	for {
+		var msg struct {
+			Stream string `json:"stream"`
+			Error  string `json:"error"`
+		}
+		if err := decoder.Decode(&msg); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("failed to read build output: %w", err)
+		}
+		if msg.Error != "" {
+			return fmt.Errorf("build error: %s", msg.Error)
+		}
+		if msg.Stream != "" {
+			lastLine = msg.Stream
+		}
+	}
+
+	m.logger.Info("Validator image built successfully",
+		zap.String("image", validatorImage),
+		zap.String("last_output", strings.TrimSpace(lastLine)),
+	)
+
+	return nil
+}
+
+// createBuildContext creates a tar archive of the build directory.
+func createBuildContext(dir string) (io.ReadCloser, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Get relative path
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+
+		// Skip the root directory itself
+		if relPath == "." {
+			return nil
+		}
+
+		// Create tar header
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = relPath
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		// Write file content if it's a regular file
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			if _, err := io.Copy(tw, file); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+
+	return io.NopCloser(&buf), nil
 }
 
 // WaitContainer waits for a container to finish and returns logs.

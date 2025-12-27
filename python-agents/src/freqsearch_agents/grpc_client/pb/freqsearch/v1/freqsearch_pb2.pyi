@@ -166,12 +166,18 @@ class GetOptimizationRunResponse(_message.Message):
     def __init__(self, run: _Optional[_Union[OptimizationRun, _Mapping]] = ..., iterations: _Optional[_Iterable[_Union[OptimizationIteration, _Mapping]]] = ...) -> None: ...
 
 class ControlOptimizationRequest(_message.Message):
-    __slots__ = ("run_id", "action")
+    __slots__ = ("run_id", "action", "total_iterations", "best_strategy_id", "termination_reason")
     RUN_ID_FIELD_NUMBER: _ClassVar[int]
     ACTION_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_ITERATIONS_FIELD_NUMBER: _ClassVar[int]
+    BEST_STRATEGY_ID_FIELD_NUMBER: _ClassVar[int]
+    TERMINATION_REASON_FIELD_NUMBER: _ClassVar[int]
     run_id: str
     action: OptimizationAction
-    def __init__(self, run_id: _Optional[str] = ..., action: _Optional[_Union[OptimizationAction, str]] = ...) -> None: ...
+    total_iterations: int
+    best_strategy_id: str
+    termination_reason: str
+    def __init__(self, run_id: _Optional[str] = ..., action: _Optional[_Union[OptimizationAction, str]] = ..., total_iterations: _Optional[int] = ..., best_strategy_id: _Optional[str] = ..., termination_reason: _Optional[str] = ...) -> None: ...
 
 class ControlOptimizationResponse(_message.Message):
     __slots__ = ("success", "run")

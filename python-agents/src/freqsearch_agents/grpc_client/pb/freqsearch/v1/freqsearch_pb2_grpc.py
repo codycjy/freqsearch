@@ -9,7 +9,7 @@ from . import freqsearch_pb2 as freqsearch_dot_v1_dot_freqsearch__pb2
 from . import strategy_pb2 as freqsearch_dot_v1_dot_strategy__pb2
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 
-GRPC_GENERATED_VERSION = '1.74.0'
+GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -22,7 +22,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in freqsearch/v1/freqsearch_pb2_grpc.py depends on'
+        + ' but the generated code in freqsearch/v1/freqsearch_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -65,6 +65,11 @@ class FreqSearchServiceStub(object):
                 '/freqsearch.v1.FreqSearchService/DeleteStrategy',
                 request_serializer=freqsearch_dot_v1_dot_strategy__pb2.DeleteStrategyRequest.SerializeToString,
                 response_deserializer=freqsearch_dot_v1_dot_strategy__pb2.DeleteStrategyResponse.FromString,
+                _registered_method=True)
+        self.ValidateStrategy = channel.unary_unary(
+                '/freqsearch.v1.FreqSearchService/ValidateStrategy',
+                request_serializer=freqsearch_dot_v1_dot_strategy__pb2.ValidateStrategyRequest.SerializeToString,
+                response_deserializer=freqsearch_dot_v1_dot_strategy__pb2.ValidateStrategyResponse.FromString,
                 _registered_method=True)
         self.SubmitBacktest = channel.unary_unary(
                 '/freqsearch.v1.FreqSearchService/SubmitBacktest',
@@ -174,6 +179,13 @@ class FreqSearchServiceServicer(object):
 
     def DeleteStrategy(self, request, context):
         """Delete a strategy
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ValidateStrategy(self, request, context):
+        """Validate strategy code using Docker container (fast validation without full backtest)
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -310,6 +322,11 @@ def add_FreqSearchServiceServicer_to_server(servicer, server):
                     servicer.DeleteStrategy,
                     request_deserializer=freqsearch_dot_v1_dot_strategy__pb2.DeleteStrategyRequest.FromString,
                     response_serializer=freqsearch_dot_v1_dot_strategy__pb2.DeleteStrategyResponse.SerializeToString,
+            ),
+            'ValidateStrategy': grpc.unary_unary_rpc_method_handler(
+                    servicer.ValidateStrategy,
+                    request_deserializer=freqsearch_dot_v1_dot_strategy__pb2.ValidateStrategyRequest.FromString,
+                    response_serializer=freqsearch_dot_v1_dot_strategy__pb2.ValidateStrategyResponse.SerializeToString,
             ),
             'SubmitBacktest': grpc.unary_unary_rpc_method_handler(
                     servicer.SubmitBacktest,
@@ -520,6 +537,33 @@ class FreqSearchService(object):
             '/freqsearch.v1.FreqSearchService/DeleteStrategy',
             freqsearch_dot_v1_dot_strategy__pb2.DeleteStrategyRequest.SerializeToString,
             freqsearch_dot_v1_dot_strategy__pb2.DeleteStrategyResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ValidateStrategy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/freqsearch.v1.FreqSearchService/ValidateStrategy',
+            freqsearch_dot_v1_dot_strategy__pb2.ValidateStrategyRequest.SerializeToString,
+            freqsearch_dot_v1_dot_strategy__pb2.ValidateStrategyResponse.FromString,
             options,
             channel_credentials,
             insecure,

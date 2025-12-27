@@ -85,6 +85,21 @@ services:
     profiles:
       - backend  # Only start with: docker compose --profile backend up
 
+  # Strategy Validator (custom freqtrade image with additional libs)
+  # Used for quick validation before full backtest
+  strategy-validator:
+    build:
+      context: ./freqtrade
+      dockerfile: Dockerfile
+    image: freqsearch/strategy-validator:latest
+    container_name: freqsearch-validator
+    volumes:
+      - ../data/strategies:/strategies:ro
+    networks:
+      - freqsearch-network
+    profiles:
+      - validator  # Build with: docker compose --profile validator build
+
   # Python Agents Service (Scout, Engineer, Analyst)
   python-agents:
     build:

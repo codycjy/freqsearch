@@ -420,3 +420,12 @@ var (
 	ErrDockerDaemonError    = errors.New("docker daemon error")
 	ErrStrategyCodeError    = errors.New("strategy code error")
 )
+
+// ValidateStrategy validates strategy code using Docker container.
+// This is faster than running a full backtest.
+func (s *Scheduler) ValidateStrategy(ctx context.Context, code string, name string) (*docker.ValidationResult, error) {
+	return s.dockerManager.ValidateStrategy(ctx, &docker.ValidateStrategyParams{
+		StrategyCode: code,
+		StrategyName: name,
+	})
+}

@@ -473,6 +473,52 @@ class FreqSearchClient:
             logger.error("Failed to delete strategy", strategy_id=strategy_id, error=str(e))
             raise _map_grpc_error(e)
 
+    async def validate_strategy(self, code: str, name: str = "ValidatedStrategy") -> Dict[str, Any]:
+        """
+        Validate strategy code using Docker container.
+
+        Fast validation that checks:
+        - Python syntax
+        - Import availability
+        - IStrategy class presence
+        - Required methods
+
+        Args:
+            code: Python source code of the strategy
+            name: Strategy class name (optional)
+
+        Returns:
+            Dict with:
+                - valid: bool - whether validation passed
+                - errors: List[str] - validation errors
+                - warnings: List[str] - non-fatal warnings
+                - class_name: str - detected strategy class name
+
+        Example:
+            result = await client.validate_strategy(strategy_code)
+            if not result["valid"]:
+                print("Errors:", result["errors"])
+        """
+        self._ensure_connected()
+
+        request = strategy_pb2.ValidateStrategyRequest(
+            code=code,
+            name=name,
+        )
+
+        try:
+            response = await self._stub.ValidateStrategy(request, timeout=60.0)  # Validation may take time on first run (building image)
+            result = MessageToDict(response, preserving_proto_field_name=True)
+            logger.info(
+                "Strategy validated",
+                valid=result.get("valid", False),
+                errors=result.get("errors", []),
+            )
+            return result
+        except grpc.RpcError as e:
+            logger.error("Failed to validate strategy", error=str(e))
+            raise _map_grpc_error(e)
+
     # ===== Backtest Operations =====
 
     async def submit_backtest(
@@ -815,6 +861,8 @@ class FreqSearchClient:
         self,
         run_id: str,
         action: str,  # "pause", "resume", "cancel", "complete", "fail"
+        termination_reason: Optional[str] = None,
+        best_strategy_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Control an optimization run (pause, resume, cancel, complete, fail).
@@ -822,6 +870,8 @@ class FreqSearchClient:
         Args:
             run_id: Optimization run ID
             action: Control action ("pause", "resume", "cancel", "complete", "fail")
+            termination_reason: Optional reason for termination (for complete/fail actions)
+            best_strategy_id: Optional best strategy ID (for complete action)
 
         Returns:
             Dict with "success" and updated "run"
@@ -830,6 +880,13 @@ class FreqSearchClient:
             result = await client.control_optimization("run-123", "pause")
             if result["success"]:
                 print(f"Run paused: {result['run']['status']}")
+
+            # Complete with metadata
+            result = await client.control_optimization(
+                "run-123", "complete",
+                termination_reason="max_iterations",
+                best_strategy_id="strategy-456"
+            )
         """
         self._ensure_connected()
 
@@ -844,10 +901,17 @@ class FreqSearchClient:
         if action not in action_map:
             raise ValidationError(f"Invalid action: {action}. Must be one of: pause, resume, cancel, complete, fail")
 
-        request = freqsearch_pb2.ControlOptimizationRequest(
-            run_id=run_id,
-            action=action_map[action],
-        )
+        # Build request with optional fields
+        request_kwargs = {
+            "run_id": run_id,
+            "action": action_map[action],
+        }
+        if termination_reason:
+            request_kwargs["termination_reason"] = termination_reason
+        if best_strategy_id:
+            request_kwargs["best_strategy_id"] = best_strategy_id
+
+        request = freqsearch_pb2.ControlOptimizationRequest(**request_kwargs)
 
         try:
             response = await self._stub.ControlOptimization(request, timeout=self.timeout)

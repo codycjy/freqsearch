@@ -308,13 +308,22 @@ class WebSocketLiveProvider implements LiveProvider {
         return;
       }
 
-      const message = JSON.parse(event.data) as WebSocketMessage;
-      this.log("Received message:", message);
+      // Handle multiple JSON messages that might be concatenated (split by newlines)
+      const rawData = event.data as string;
+      const lines = rawData.split('\n').filter((line: string) => line.trim());
 
-      // Route message to appropriate subscriptions
-      this.routeMessage(message);
+      for (const line of lines) {
+        try {
+          const message = JSON.parse(line) as WebSocketMessage;
+          this.log("Received message:", message);
+          // Route message to appropriate subscriptions
+          this.routeMessage(message);
+        } catch (parseError) {
+          this.logError("Failed to parse WebSocket message line:", parseError, line);
+        }
+      }
     } catch (error) {
-      this.logError("Failed to parse WebSocket message:", error);
+      this.logError("Failed to handle WebSocket message:", error);
     }
   };
 

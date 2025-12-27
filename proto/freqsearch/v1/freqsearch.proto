@@ -102,6 +102,10 @@ message GetOptimizationRunResponse {
 message ControlOptimizationRequest {
   string run_id = 1;
   OptimizationAction action = 2;
+  // Optional metadata for COMPLETE action
+  optional int32 total_iterations = 3;
+  optional string best_strategy_id = 4;
+  optional string termination_reason = 5;
 }
 
 enum OptimizationAction {
@@ -160,6 +164,9 @@ service FreqSearchService {
 
   // Delete a strategy
   rpc DeleteStrategy(DeleteStrategyRequest) returns (DeleteStrategyResponse);
+
+  // Validate strategy code using Docker container (fast validation without full backtest)
+  rpc ValidateStrategy(ValidateStrategyRequest) returns (ValidateStrategyResponse);
 
   // ===== Backtest Operations =====
 

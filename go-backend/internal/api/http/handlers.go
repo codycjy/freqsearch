@@ -792,6 +792,15 @@ func (h *Handler) HandleStartOptimization(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Set default mode if not provided
+	if req.Config.Mode == "" {
+		req.Config.Mode = domain.OptimizationModeBalanced
+	}
+	// Set default max_iterations if not provided
+	if req.Config.MaxIterations == 0 {
+		req.Config.MaxIterations = 10
+	}
+
 	run := domain.NewOptimizationRun(req.Name, baseStrategyID, req.Config)
 
 	if err := h.repos.Optimization.Create(r.Context(), run); err != nil {
@@ -964,8 +973,12 @@ func (h *Handler) HandleControlOptimization(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Normalize action - accept both simple names and protobuf enum names
+	action := strings.ToLower(req.Action)
+	action = strings.TrimPrefix(action, "optimization_action_")
+
 	var newStatus domain.OptimizationStatus
-	switch strings.ToLower(req.Action) {
+	switch action {
 	case "pause":
 		newStatus = domain.OptimizationStatusPaused
 	case "resume":

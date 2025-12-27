@@ -200,3 +200,23 @@ class DeleteStrategyResponse(_message.Message):
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     success: bool
     def __init__(self, success: bool = ...) -> None: ...
+
+class ValidateStrategyRequest(_message.Message):
+    __slots__ = ("code", "name")
+    CODE_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    code: str
+    name: str
+    def __init__(self, code: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
+
+class ValidateStrategyResponse(_message.Message):
+    __slots__ = ("valid", "errors", "warnings", "class_name")
+    VALID_FIELD_NUMBER: _ClassVar[int]
+    ERRORS_FIELD_NUMBER: _ClassVar[int]
+    WARNINGS_FIELD_NUMBER: _ClassVar[int]
+    CLASS_NAME_FIELD_NUMBER: _ClassVar[int]
+    valid: bool
+    errors: _containers.RepeatedScalarFieldContainer[str]
+    warnings: _containers.RepeatedScalarFieldContainer[str]
+    class_name: str
+    def __init__(self, valid: bool = ..., errors: _Optional[_Iterable[str]] = ..., warnings: _Optional[_Iterable[str]] = ..., class_name: _Optional[str] = ...) -> None: ...

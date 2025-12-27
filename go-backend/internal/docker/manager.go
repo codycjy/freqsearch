@@ -15,6 +15,10 @@ type Manager interface {
 	// RunBacktest starts a Freqtrade backtest container.
 	RunBacktest(ctx context.Context, params *RunBacktestParams) (containerID string, err error)
 
+	// ValidateStrategy validates strategy code using Docker container.
+	// Returns validation result with any errors/warnings found.
+	ValidateStrategy(ctx context.Context, params *ValidateStrategyParams) (*ValidationResult, error)
+
 	// WaitContainer waits for a container to finish and returns logs.
 	WaitContainer(ctx context.Context, containerID string) (exitCode int64, logs string, err error)
 
@@ -32,6 +36,30 @@ type Manager interface {
 
 	// IsContainerRunning checks if a container is still running.
 	IsContainerRunning(ctx context.Context, containerID string) (bool, error)
+}
+
+// ValidateStrategyParams contains parameters for strategy validation.
+type ValidateStrategyParams struct {
+	// StrategyCode is the Python source code for the strategy.
+	StrategyCode string
+
+	// StrategyName is the class name of the strategy.
+	StrategyName string
+}
+
+// ValidationResult contains the result of strategy validation.
+type ValidationResult struct {
+	// Valid indicates if the strategy passed all checks.
+	Valid bool `json:"valid"`
+
+	// Errors contains validation errors (if any).
+	Errors []string `json:"errors"`
+
+	// Warnings contains non-fatal issues.
+	Warnings []string `json:"warnings"`
+
+	// ClassName is the detected strategy class name.
+	ClassName string `json:"class_name"`
 }
 
 // RunBacktestParams contains parameters for running a backtest.

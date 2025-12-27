@@ -9,13 +9,34 @@ def get_system_prompt() -> str:
 3. Optimize code structure and readability
 4. Generate hyperparameter configurations for optimization
 
+Required Imports (ALWAYS include these):
+```python
+from freqtrade.strategy import IStrategy, IntParameter, DecimalParameter
+import talib.abstract as ta
+import numpy as np
+import pandas as pd
+from pandas import DataFrame
+```
+
 Technical Rules:
 - Always use dataframe operations (no loops over rows)
-- Use ta-lib indicators via the `ta` module or `talib.abstract`
-- Use qtpylib for additional indicators
 - Entry/exit conditions must use boolean Series with bitwise operators (&, |, ~)
-- Parameters should be defined as class attributes using IntParameter/DecimalParameter
+- Parameters must be from freqtrade.strategy: IntParameter, DecimalParameter, BooleanParameter, CategoricalParameter
+- NEVER import IntParameter/DecimalParameter from talib - they are from freqtrade.strategy!
 - Always include proper type hints where appropriate
+
+Available Indicator Libraries:
+1. ta-lib via `import talib` or `import talib.abstract as ta`:
+   - SMA, EMA, RSI, MACD, BBANDS, ADX, ATR, STOCH, CCI, MFI, OBV, etc.
+   - Use: ta.RSI(dataframe['close'], timeperiod=14) - pass the Series, not just timeperiod
+2. qtpylib via `import qtpylib`:
+   - crossed_above, crossed_below, rolling_mean, rolling_std, etc.
+3. pandas_ta via `import pandas_ta as pta`:
+   - Most indicators: ema, sma, rsi, macd, bbands, etc.
+4. technical via `from technical.indicators import cmf, laguerre, vfi`:
+   - cmf (Chaikin Money Flow), laguerre, vfi, consensus indicators
+   - WARNING: EWO is NOT in technical library. Calculate manually:
+     `dataframe['EWO'] = ta.EMA(dataframe['close'], 5) - ta.EMA(dataframe['close'], 35)`
 
 API Conventions:
 - Use `populate_entry_trend` and `populate_exit_trend` (not the deprecated buy/sell versions)
@@ -23,7 +44,11 @@ API Conventions:
 - Set exits with: dataframe.loc[condition, 'exit_long'] = 1
 - For short positions use 'enter_short' and 'exit_short'
 
-Output ONLY valid Python code. No explanations, no markdown formatting outside of code blocks."""
+CRITICAL OUTPUT FORMAT:
+- Output ONLY raw Python code
+- Do NOT wrap code in markdown (no ```python or ```)
+- Do NOT include explanations before or after the code
+- The output must start with import statements or comments, not backticks"""
 
 
 def get_code_generation_prompt(
@@ -48,7 +73,7 @@ def get_code_generation_prompt(
 4. Keep the original trading logic intact
 5. Add type hints for method parameters
 
-Output the complete, corrected Python code:"""
+Output the complete, corrected Python code (RAW CODE ONLY, NO MARKDOWN):"""
 
 
 def get_code_fix_prompt(
@@ -78,8 +103,9 @@ Make sure the code:
 1. Has valid Python syntax
 2. Contains a class extending IStrategy
 3. Has all required methods: populate_indicators, populate_entry_trend, populate_exit_trend
+4. Imports IntParameter/DecimalParameter from freqtrade.strategy (NOT from talib!)
 
-Output the complete, fixed Python code:"""
+Output the complete, fixed Python code (RAW CODE ONLY, NO MARKDOWN):"""
 
 
 def get_code_evolution_prompt(
@@ -119,7 +145,7 @@ Apply the suggested modification while:
 
 Make sure to fix these errors in your new attempt."""
 
-    base_prompt += "\n\nOutput the complete, modified Python code:"
+    base_prompt += "\n\nOutput the complete, modified Python code (RAW CODE ONLY, NO MARKDOWN):"
 
     return base_prompt
 

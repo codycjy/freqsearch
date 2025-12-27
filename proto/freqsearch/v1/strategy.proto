@@ -121,3 +121,17 @@ message DeleteStrategyRequest {
 message DeleteStrategyResponse {
   bool success = 1;
 }
+
+// ----- Strategy Validation -----
+
+message ValidateStrategyRequest {
+  string code = 1;           // Python source code to validate
+  string name = 2;           // Strategy class name
+}
+
+message ValidateStrategyResponse {
+  bool valid = 1;                    // Whether strategy passed all checks
+  repeated string errors = 2;        // Validation errors (import failures, missing methods, etc.)
+  repeated string warnings = 3;      // Non-fatal warnings
+  string class_name = 4;             // Detected strategy class name
+}

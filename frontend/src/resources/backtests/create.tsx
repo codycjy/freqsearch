@@ -212,7 +212,7 @@ export const BacktestCreate: React.FC = () => {
         layout="vertical"
         onFinish={handleSubmit}
         initialValues={{
-          exchange: 'bybit',
+          exchange: 'okx',
           timeframe: '1h',
           priority: 3,
           dry_run_wallet: 10000,

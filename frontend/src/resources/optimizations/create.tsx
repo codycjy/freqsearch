@@ -1,7 +1,21 @@
 import { useForm, useSelect } from '@refinedev/antd';
 import { Create } from '@refinedev/antd';
-import { Form, Input, InputNumber, Select, Card, Row, Col } from 'antd';
+import { Form, Input, InputNumber, Select, Card, Row, Col, DatePicker } from 'antd';
 import type { CreateOptimizationPayload, Strategy } from '@providers/types';
+import dayjs from 'dayjs';
+import type { Dayjs } from 'dayjs';
+
+const { RangePicker } = DatePicker;
+
+const rangePresets: {
+  label: string;
+  value: [Dayjs, Dayjs];
+}[] = [
+  { label: 'Last 7 Days', value: [dayjs().subtract(7, 'day'), dayjs()] },
+  { label: 'Last 30 Days', value: [dayjs().subtract(30, 'day'), dayjs()] },
+  { label: 'Last 90 Days', value: [dayjs().subtract(90, 'day'), dayjs()] },
+  { label: 'Last 365 Days', value: [dayjs().subtract(365, 'day'), dayjs()] },
+];
 
 const optimizationModes: Array<{ label: string; value: string }> = [
   { label: 'Maximize Sharpe Ratio', value: 'maximize_sharpe' },
@@ -11,7 +25,7 @@ const optimizationModes: Array<{ label: string; value: string }> = [
 ];
 
 export const OptimizationCreate = () => {
-  const { formProps, saveButtonProps } = useForm<CreateOptimizationPayload>({
+  const { formProps, saveButtonProps, onFinish } = useForm<CreateOptimizationPayload>({
     redirect: 'show',
   });
 
@@ -21,17 +35,41 @@ export const OptimizationCreate = () => {
     optionValue: 'id',
   });
 
+  const handleFinish = (values: any) => {
+    // Transform timerange array to timerange_start and timerange_end
+    const timerange = values.config?.backtest_config?.timerange;
+    if (timerange && Array.isArray(timerange)) {
+      const transformedValues = {
+        ...values,
+        config: {
+          ...values.config,
+          backtest_config: {
+            ...values.config.backtest_config,
+            timerange_start: timerange[0],
+            timerange_end: timerange[1],
+          },
+        },
+      };
+      // Remove the temporary timerange field
+      delete transformedValues.config.backtest_config.timerange;
+      onFinish(transformedValues);
+    } else {
+      onFinish(values);
+    }
+  };
+
   return (
     <Create saveButtonProps={saveButtonProps}>
       <Form
         {...formProps}
         layout="vertical"
+        onFinish={handleFinish}
         initialValues={{
           config: {
             max_iterations: 50,
             mode: 'maximize_sharpe',
             backtest_config: {
-              exchange: 'bybit',
+              exchange: 'okx',
               timeframe: '1h',
               dry_run_wallet: 1000,
               max_open_trades: 3,
@@ -178,22 +216,24 @@ export const OptimizationCreate = () => {
           </Row>
 
           <Row gutter={16}>
-            <Col span={12}>
+            <Col span={24}>
               <Form.Item
-                label="Start Date"
-                name={['config', 'backtest_config', 'timerange_start']}
-                rules={[{ required: true }]}
+                label="Time Range"
+                name={['config', 'backtest_config', 'timerange']}
+                rules={[{ required: true, message: 'Please select time range' }]}
+                getValueProps={(value) => ({
+                  value: value ? [dayjs(value[0]), dayjs(value[1])] : undefined,
+                })}
+                getValueFromEvent={(dates: [Dayjs, Dayjs] | null) => {
+                  if (!dates) return undefined;
+                  return [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')];
+                }}
               >
-                <Input type="date" style={{ width: '100%' }} placeholder="YYYY-MM-DD" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                label="End Date"
-                name={['config', 'backtest_config', 'timerange_end']}
-                rules={[{ required: true }]}
-              >
-                <Input type="date" style={{ width: '100%' }} placeholder="YYYY-MM-DD" />
+                <RangePicker
+                  presets={rangePresets}
+                  style={{ width: '100%' }}
+                  format="YYYY-MM-DD"
+                />
               </Form.Item>
             </Col>
           </Row>

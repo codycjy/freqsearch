@@ -13,11 +13,15 @@ var digitPrefixRegex = regexp.MustCompile(`^(\d+)_?(.*)$`)
 
 // SanitizeStrategyName fixes strategy names that would be invalid Python class names.
 // Python class names cannot start with a digit, so we reorder: "01_Strategy" -> "Strategy_01"
+// Also replaces hyphens with underscores since Python identifiers cannot contain hyphens.
 func SanitizeStrategyName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "Strategy"
 	}
+
+	// Replace hyphens with underscores (Python identifiers can't have hyphens)
+	name = strings.ReplaceAll(name, "-", "_")
 
 	// Check if name starts with digit
 	if name[0] >= '0' && name[0] <= '9' {

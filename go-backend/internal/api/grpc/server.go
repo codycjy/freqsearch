@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
-	"strings"
+	"regexp"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
@@ -80,14 +80,26 @@ func (s *Server) CreateStrategy(ctx context.Context, req *pb.CreateStrategyReque
 	// Sanitize strategy name to ensure valid Python class name
 	sanitizedName := domain.SanitizeStrategyName(req.Name)
 
-	// Also fix class name in code if it doesn't match
+	// Use regex to find and replace the class name in the code
+	// This handles cases where the code contains a different class name than req.Name
+	// (e.g., Engineer Agent generates "class ElliotV5_SMA(IStrategy)" but we need "class ElliotV5_SMA_opt_xxx_iter_0(IStrategy)")
 	code := req.Code
-	if sanitizedName != req.Name {
-		// Replace class definition with sanitized name
-		code = strings.Replace(code, "class "+req.Name+"(", "class "+sanitizedName+"(", 1)
-		s.logger.Info("Sanitized strategy name",
-			zap.String("original", req.Name),
-			zap.String("sanitized", sanitizedName),
+	classPattern := regexp.MustCompile(`class\s+(\w+)\s*\(\s*IStrategy\s*\)`)
+	matches := classPattern.FindStringSubmatch(code)
+	if len(matches) > 1 {
+		originalClassName := matches[1]
+		if originalClassName != sanitizedName {
+			// Replace the class definition with the sanitized name
+			code = classPattern.ReplaceAllString(code, "class "+sanitizedName+"(IStrategy)")
+			s.logger.Info("Replaced strategy class name",
+				zap.String("original_class", originalClassName),
+				zap.String("new_class", sanitizedName),
+				zap.String("req_name", req.Name),
+			)
+		}
+	} else {
+		s.logger.Warn("Could not find IStrategy class in code",
+			zap.String("strategy_name", req.Name),
 		)
 	}
 
@@ -159,6 +171,46 @@ func (s *Server) DeleteStrategy(ctx context.Context, req *pb.DeleteStrategyReque
 	return &pb.DeleteStrategyResponse{}, nil
 }
 
+// ValidateStrategy validates strategy code using Docker container.
+func (s *Server) ValidateStrategy(ctx context.Context, req *pb.ValidateStrategyRequest) (*pb.ValidateStrategyResponse, error) {
+	ctx, span := s.tracer.Start(ctx, "ValidateStrategy")
+	defer span.End()
+
+	if req.Code == "" {
+		return nil, status.Errorf(grpccodes.InvalidArgument, "code is required")
+	}
+
+	// Get sanitized name
+	name := req.Name
+	if name == "" {
+		name = "ValidatedStrategy"
+	}
+	name = domain.SanitizeStrategyName(name)
+
+	span.SetAttributes(attribute.String("strategy.name", name))
+
+	// Validate using Docker
+	result, err := s.scheduler.ValidateStrategy(ctx, req.Code, name)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, status.Errorf(grpccodes.Internal, "validation failed: %v", err)
+	}
+
+	s.logger.Info("Strategy validated",
+		zap.String("name", name),
+		zap.Bool("valid", result.Valid),
+		zap.Strings("errors", result.Errors),
+	)
+
+	return &pb.ValidateStrategyResponse{
+		Valid:     result.Valid,
+		Errors:    result.Errors,
+		Warnings:  result.Warnings,
+		ClassName: result.ClassName,
+	}, nil
+}
+
 // SubmitBacktest submits a backtest job.
 func (s *Server) SubmitBacktest(ctx context.Context, req *pb.SubmitBacktestRequest) (*pb.SubmitBacktestResponse, error) {
 	strategyID, err := uuid.Parse(req.StrategyId)
@@ -166,12 +218,41 @@ func (s *Server) SubmitBacktest(ctx context.Context, req *pb.SubmitBacktestReque
 		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid strategy_id: %v", err)
 	}
 
+	// Parse optional optimization_run_id
+	var optRunID *uuid.UUID
+	if req.OptimizationRunId != nil && *req.OptimizationRunId != "" {
+		parsed, err := uuid.Parse(*req.OptimizationRunId)
+		if err != nil {
+			return nil, status.Errorf(grpccodes.InvalidArgument, "invalid optimization_run_id: %v", err)
+		}
+		optRunID = &parsed
+	}
+
 	config := protoConfigToDomain(req.Config)
-	job := domain.NewBacktestJob(strategyID, config, int(req.Priority), nil)
+	job := domain.NewBacktestJob(strategyID, config, int(req.Priority), optRunID)
 
 	if err := s.repos.BacktestJob.Create(ctx, job); err != nil {
 		s.logger.Error("Failed to create backtest job", zap.Error(err))
 		return nil, status.Errorf(grpccodes.Internal, "failed to create job")
+	}
+
+	// If this is part of an optimization run, create an iteration record
+	if optRunID != nil {
+		optRun, err := s.repos.Optimization.GetByID(ctx, *optRunID)
+		if err != nil {
+			s.logger.Warn("Failed to get optimization run for iteration", zap.Error(err), zap.String("run_id", optRunID.String()))
+		} else {
+			// Create iteration record (iteration_number = current_iteration + 1)
+			iteration := domain.NewOptimizationIteration(*optRunID, optRun.CurrentIteration+1, strategyID, job.ID)
+			if err := s.repos.Optimization.AddIteration(ctx, iteration); err != nil {
+				s.logger.Warn("Failed to create optimization iteration", zap.Error(err), zap.String("run_id", optRunID.String()))
+			} else {
+				s.logger.Info("Created optimization iteration",
+					zap.String("run_id", optRunID.String()),
+					zap.Int("iteration_number", iteration.IterationNumber),
+					zap.String("job_id", job.ID.String()))
+			}
+		}
 	}
 
 	// Publish task created event
@@ -557,28 +638,90 @@ func (s *Server) ControlOptimization(ctx context.Context, req *pb.ControlOptimiz
 	switch req.Action {
 	case pb.OptimizationAction_OPTIMIZATION_ACTION_PAUSE:
 		newStatus = domain.OptimizationStatusPaused
+		if err := s.repos.Optimization.UpdateStatus(ctx, runID, newStatus); err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				span.SetStatus(codes.Error, "optimization run not found")
+				return nil, status.Errorf(grpccodes.NotFound, "optimization run not found")
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to update status")
+			s.logger.Error("Failed to control optimization run", zap.Error(err))
+			return nil, status.Errorf(grpccodes.Internal, "failed to control optimization")
+		}
 	case pb.OptimizationAction_OPTIMIZATION_ACTION_RESUME:
 		newStatus = domain.OptimizationStatusRunning
+		if err := s.repos.Optimization.UpdateStatus(ctx, runID, newStatus); err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				span.SetStatus(codes.Error, "optimization run not found")
+				return nil, status.Errorf(grpccodes.NotFound, "optimization run not found")
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to update status")
+			s.logger.Error("Failed to control optimization run", zap.Error(err))
+			return nil, status.Errorf(grpccodes.Internal, "failed to control optimization")
+		}
 	case pb.OptimizationAction_OPTIMIZATION_ACTION_CANCEL:
 		newStatus = domain.OptimizationStatusCancelled
+		if err := s.repos.Optimization.UpdateStatus(ctx, runID, newStatus); err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				span.SetStatus(codes.Error, "optimization run not found")
+				return nil, status.Errorf(grpccodes.NotFound, "optimization run not found")
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to update status")
+			s.logger.Error("Failed to control optimization run", zap.Error(err))
+			return nil, status.Errorf(grpccodes.Internal, "failed to control optimization")
+		}
 	case pb.OptimizationAction_OPTIMIZATION_ACTION_COMPLETE:
 		newStatus = domain.OptimizationStatusCompleted
+		// Parse optional best_strategy_id
+		var bestStrategyID *uuid.UUID
+		if req.BestStrategyId != nil && *req.BestStrategyId != "" {
+			parsed, err := uuid.Parse(*req.BestStrategyId)
+			if err != nil {
+				span.RecordError(err)
+				return nil, status.Errorf(grpccodes.InvalidArgument, "invalid best_strategy_id: %v", err)
+			}
+			bestStrategyID = &parsed
+		}
+		// Get termination reason
+		reason := "completed"
+		if req.TerminationReason != nil && *req.TerminationReason != "" {
+			reason = *req.TerminationReason
+		}
+		if err := s.repos.Optimization.Complete(ctx, runID, reason, bestStrategyID, nil); err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				span.SetStatus(codes.Error, "optimization run not found")
+				return nil, status.Errorf(grpccodes.NotFound, "optimization run not found")
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to complete optimization")
+			s.logger.Error("Failed to complete optimization run", zap.Error(err))
+			return nil, status.Errorf(grpccodes.Internal, "failed to complete optimization")
+		}
+		s.logger.Info("Optimization completed",
+			zap.String("run_id", runID.String()),
+			zap.String("reason", reason),
+			zap.Any("best_strategy_id", bestStrategyID))
 	case pb.OptimizationAction_OPTIMIZATION_ACTION_FAIL:
 		newStatus = domain.OptimizationStatusFailed
+		reason := "failed"
+		if req.TerminationReason != nil && *req.TerminationReason != "" {
+			reason = *req.TerminationReason
+		}
+		if err := s.repos.Optimization.Fail(ctx, runID, reason); err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				span.SetStatus(codes.Error, "optimization run not found")
+				return nil, status.Errorf(grpccodes.NotFound, "optimization run not found")
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to fail optimization")
+			s.logger.Error("Failed to fail optimization run", zap.Error(err))
+			return nil, status.Errorf(grpccodes.Internal, "failed to fail optimization")
+		}
 	default:
 		span.SetStatus(codes.Error, "invalid action")
 		return nil, status.Errorf(grpccodes.InvalidArgument, "invalid action")
-	}
-
-	if err := s.repos.Optimization.UpdateStatus(ctx, runID, newStatus); err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			span.SetStatus(codes.Error, "optimization run not found")
-			return nil, status.Errorf(grpccodes.NotFound, "optimization run not found")
-		}
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "failed to update status")
-		s.logger.Error("Failed to control optimization run", zap.Error(err))
-		return nil, status.Errorf(grpccodes.Internal, "failed to control optimization")
 	}
 
 	run, err := s.repos.Optimization.GetByID(ctx, runID)

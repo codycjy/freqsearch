@@ -73,6 +73,29 @@ def should_continue(
     return "continue"
 
 
+def route_after_submit(
+    state: OrchestratorState,
+) -> Literal["wait", "retry"]:
+    """Route based on backtest submission result.
+
+    If validation failed, skip waiting and go directly to retry via analyst flow.
+
+    Args:
+        state: Current orchestrator state
+
+    Returns:
+        "wait" to wait for backtest result
+        "retry" to skip directly to analyst (validation failed)
+    """
+    # If validation failed, analyst_decision is already set to NEEDS_MODIFICATION
+    if state.get("analyst_decision") == DiagnosisStatus.NEEDS_MODIFICATION.value:
+        logger.info("Validation failed - routing to retry via analyst flow")
+        return "retry"
+
+    # Normal flow - wait for backtest
+    return "wait"
+
+
 def route_after_decision(
     state: OrchestratorState,
 ) -> Literal["iterate", "complete", "archive", "fail"]:
@@ -158,7 +181,17 @@ def create_orchestrator_agent() -> StateGraph:
     # Linear flow from initialization through first iteration
     workflow.add_edge("initialize", "invoke_engineer")
     workflow.add_edge("invoke_engineer", "submit_backtest")
-    workflow.add_edge("submit_backtest", "wait_for_result")
+
+    # Conditional routing after submit: validation failure skips waiting
+    workflow.add_conditional_edges(
+        "submit_backtest",
+        route_after_submit,
+        {
+            "wait": "wait_for_result",
+            "retry": "process_decision",  # Skip analyst, go directly to decision (feedback already set)
+        },
+    )
+
     workflow.add_edge("wait_for_result", "invoke_analyst")
     workflow.add_edge("invoke_analyst", "process_decision")
 

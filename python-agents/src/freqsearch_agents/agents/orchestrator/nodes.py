@@ -270,6 +270,37 @@ async def submit_backtest_node(
 
         # Create strategy in backend and submit backtest via gRPC
         async with FreqSearchClient(grpc_address) as client:
+            # First, validate the strategy code
+            try:
+                validation_result = await client.validate_strategy(
+                    code=generated_code,
+                    name=f"strategy_iter_{iteration}",
+                )
+
+                if not validation_result.get("valid", False):
+                    validation_errors = validation_result.get("errors", ["Unknown validation error"])
+                    logger.warning(
+                        "Strategy validation failed",
+                        iteration=iteration,
+                        errors=validation_errors,
+                    )
+                    # Return error to trigger engineer retry with feedback
+                    return {
+                        "backtest_error": f"Validation failed: {'; '.join(validation_errors)}",
+                        "analyst_decision": "NEEDS_MODIFICATION",
+                        "analyst_feedback": f"Strategy code failed validation: {'; '.join(validation_errors)}. Please fix these issues.",
+                    }
+
+                logger.info("Strategy validation passed", iteration=iteration)
+
+            except Exception as e:
+                logger.warning(
+                    "Strategy validation call failed, proceeding anyway",
+                    iteration=iteration,
+                    error=str(e),
+                )
+                # Continue without validation if the service is unavailable
+
             # Create the new strategy in backend
             try:
                 # Get base strategy name for better naming
@@ -430,7 +461,8 @@ async def wait_for_result_node(
                             "max_drawdown_pct": 0.0,
                             "sharpe_ratio": 0.0,
                         },
-                        "errors": state["errors"] + [f"Backtest failed: {error_msg}"],
+                        # Do not add to errors, as this is a handled failure state
+                        # "errors": state["errors"] + [f"Backtest failed: {error_msg}"],
                     }
                 elif job_status == "JOB_STATUS_CANCELLED":
                     logger.warning("Backtest was cancelled", job_id=job_id)
@@ -615,7 +647,7 @@ async def invoke_analyst_node(
         return {
             "analyst_decision": decision,
             "analyst_feedback": feedback,
-            "messages": state["messages"] + [analyst_result],
+            # Note: Not adding analyst_result to messages as it's not in LangGraph message format
         }
 
     except Exception as e:
@@ -647,9 +679,20 @@ async def process_decision_node(
     iteration = state["current_iteration"]
     max_iterations = state["max_iterations"]
 
+    # Handle validation failure case - no backtest result, but needs retry
     if not current_result:
-        logger.error("No current result to process")
-        return {"errors": state["errors"] + ["No current result"]}
+        if decision == DiagnosisStatus.NEEDS_MODIFICATION.value:
+            # Validation failed, skip result processing and continue to retry
+            logger.info(
+                "Processing validation failure - no backtest result, will retry",
+                decision=decision,
+                iteration=iteration,
+                feedback=state.get("analyst_feedback", "")[:100],
+            )
+            return {}  # No updates needed, routing will handle retry
+        else:
+            logger.error("No current result to process")
+            return {"errors": state["errors"] + ["No current result"]}
 
     current_sharpe = current_result.get("sharpe_ratio", float("-inf"))
 
@@ -803,8 +846,13 @@ async def complete_optimization_node(
     # Set optimization status to COMPLETED
     try:
         async with FreqSearchClient(grpc_address) as client:
-            # Set status to completed
-            await client.control_optimization(run_id, "complete")
+            # Set status to completed with metadata
+            await client.control_optimization(
+                run_id,
+                "complete",
+                termination_reason=termination_reason,
+                best_strategy_id=state.get("best_strategy_id"),
+            )
             logger.info("Set optimization status to COMPLETED", run_id=run_id)
 
             # Get the final optimization run state
@@ -878,7 +926,11 @@ async def handle_failure_node(
     # Set optimization status to FAILED
     try:
         async with FreqSearchClient(grpc_address) as client:
-            await client.control_optimization(run_id, "fail")
+            await client.control_optimization(
+                run_id,
+                "fail",
+                termination_reason=termination_reason,
+            )
             logger.info("Set optimization status to FAILED", run_id=run_id)
     except Exception as e:
         logger.warning("Failed to set optimization status to FAILED", run_id=run_id, error=str(e))

@@ -43,7 +43,8 @@ export const OptimizationCard: React.FC<OptimizationCardProps> = ({
     }
   };
 
-  const formatSharpeRatio = (ratio: number): string => {
+  const formatSharpeRatio = (ratio: number | undefined | null): string => {
+    if (ratio == null) return 'N/A';
     return ratio.toFixed(2);
   };
 
