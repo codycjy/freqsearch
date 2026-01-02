@@ -124,10 +124,53 @@ class AnalystState(TypedDict):
     termination_reason: str | None
 
 
+class SingleIterationState(TypedDict):
+    """Minimal state for a single optimization iteration.
+
+    Used by the new external-loop orchestrator design where each graph
+    invocation handles exactly one iteration (no internal loops).
+    """
+
+    # Context (loaded from DB at start)
+    optimization_run_id: str
+    current_iteration: int
+    base_strategy_id: str
+    current_strategy_id: str
+    backtest_config: dict[str, Any]
+
+    # Input for this iteration
+    input_code: str  # Strategy code to process/evolve
+    input_feedback: str | None  # Analyst feedback from previous iteration
+    mode: str  # "new" or "evolve"
+
+    # Best tracking (for comparison)
+    best_sharpe: float
+    best_strategy_id: str | None
+
+    # Iteration outputs
+    engineer_result: dict[str, Any] | None
+    generated_strategy_id: str | None
+    backtest_job_id: str | None
+    backtest_result: dict[str, Any] | None
+    analyst_decision: str | None  # "READY_FOR_LIVE", "NEEDS_MODIFICATION", "ARCHIVE"
+    analyst_feedback: str | None
+
+    # Validation tracking (internal retries don't consume iterations)
+    validation_passed: bool
+    validation_retry_count: int
+
+    # Control outputs (read by external loop)
+    should_terminate: bool
+    termination_reason: str | None  # "approved", "max_iterations", "archived", "validation_failed"
+    is_new_best: bool  # True if this iteration found a better strategy
+    new_best_sharpe: float | None
+
+
 class OrchestratorState(TypedDict):
-    """State for Orchestrator Agent.
+    """State for Orchestrator Agent (legacy looping design).
 
     Coordinates the full optimization loop: Engineer → Backtest → Analyst → Decision.
+    Note: Being replaced by SingleIterationState + external runner.
     """
 
     # Conversation messages

@@ -326,13 +326,17 @@ def serve(
             agent_tasks["orchestrator"] = f"Optimizing: {data.get('base_strategy_id')}"
             console.print(f"[cyan]Starting optimization: {data.get('optimization_run_id')}[/cyan]")
             try:
-                from freqsearch_agents.agents.orchestrator.agent import run_orchestrator
-                await run_orchestrator(
-                    optimization_run_id=data["optimization_run_id"],
+                # Use new external-loop runner (avoids LangGraph recursion limits)
+                from freqsearch_agents.agents.orchestrator.runner import run_optimization
+                result = await run_optimization(
+                    run_id=data["optimization_run_id"],
                     base_strategy_id=data["base_strategy_id"],
                     max_iterations=data.get("max_iterations", 10),
                     config=data.get("config", {}),
                 )
+                console.print(f"[green]Optimization completed: {result.get('termination_reason')}[/green]")
+                console.print(f"  Best sharpe: {result.get('best_sharpe')}")
+                console.print(f"  Iterations: {result.get('iterations_completed')}")
             except Exception as e:
                 console.print(f"[red]Orchestrator error: {e}[/red]")
                 logger.exception("Orchestrator failed")

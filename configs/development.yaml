@@ -26,7 +26,7 @@ go_backend:
 
   # RabbitMQ
   rabbitmq:
-    url: amqp://guest:guest@localhost:5672/
+    url: amqp://freqsearch:freqsearch_dev@localhost:5672/
     exchange: freqsearch.events
     prefetch_count: 10
 
