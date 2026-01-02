@@ -116,14 +116,30 @@ func (m *dockerManager) RunBacktest(ctx context.Context, params *RunBacktestPara
 	if params.Config.GetTradingMode() == "futures" {
 		pairs = transformPairsForFutures(pairs, "USDT")
 	}
+
+	// 5. Get pairs from config file if not specified in params
+	// This allows us to use the base_config.json's pair_whitelist
+	if len(pairs) == 0 {
+		pairs = configResult.Pairs
+	}
 	pairsArg := strings.Join(pairs, " ")
 
-	// 5. Create container with download + backtest command
+	// 6. Determine timeframe - use config file's timeframe if not specified
+	// Default to "5m" if no timeframe is specified anywhere
+	timeframe := params.Config.Timeframe
+	if timeframe == "" {
+		timeframe = configResult.Timeframe
+	}
+	if timeframe == "" {
+		timeframe = "5m" // Default timeframe
+	}
+
+	// 7. Create container with download + backtest command
 	// First download data, then run backtest
 	downloadCmd := fmt.Sprintf(
 		"freqtrade download-data --config /freqtrade/config.json --pairs %s --timeframes %s --timerange %s --trading-mode futures || true",
 		pairsArg,
-		params.Config.Timeframe,
+		timeframe,
 		timerange,
 	)
 	backtestCmd := fmt.Sprintf(

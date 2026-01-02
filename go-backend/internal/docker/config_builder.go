@@ -31,6 +31,12 @@ type BuildResult struct {
 	// ConfigPath is the path to the generated config file.
 	ConfigPath string
 
+	// Pairs is the list of trading pairs from the config (for download-data command).
+	Pairs []string
+
+	// Timeframe is the timeframe from the config.
+	Timeframe string
+
 	// Cleanup removes the temporary config file.
 	Cleanup func()
 }
@@ -74,14 +80,36 @@ func (b *ConfigBuilder) BuildRuntimeConfig(config domain.BacktestConfig) (*Build
 			finalExchange = name
 		}
 	}
+	// Extract pairs from config for download-data command
+	var pairs []string
+	if exchange, ok := baseConfig["exchange"].(map[string]interface{}); ok {
+		if pairWhitelist, ok := exchange["pair_whitelist"].([]interface{}); ok {
+			for _, p := range pairWhitelist {
+				if pairStr, ok := p.(string); ok {
+					pairs = append(pairs, pairStr)
+				}
+			}
+		}
+	}
+
+	// Extract timeframe from config
+	timeframe := ""
+	if tf, ok := baseConfig["timeframe"].(string); ok {
+		timeframe = tf
+	}
+
 	b.logger.Info("Built runtime config",
 		zap.String("path", tmpFile.Name()),
 		zap.String("final_exchange", finalExchange),
+		zap.Strings("pairs", pairs),
+		zap.String("timeframe", timeframe),
 		zap.Int("override_count", len(config.HyperoptOverrides)),
 	)
 
 	return &BuildResult{
 		ConfigPath: tmpFile.Name(),
+		Pairs:      pairs,
+		Timeframe:  timeframe,
 		Cleanup:    func() { os.Remove(tmpFile.Name()) },
 	}, nil
 }
