@@ -12,11 +12,11 @@ Example:
             code="# strategy code here"
         )
 
-        # Submit a backtest
+        # Submit a backtest (exchange/pairs/timeframe from base_config.json if empty)
         config = BacktestConfig(
-            exchange="binance",
-            pairs=["BTC/USDT"],
-            timeframe="1h",
+            exchange="",  # Uses base_config.json (OKX by default)
+            pairs=[],     # Uses base_config.json pairs
+            timeframe="", # Uses base_config.json timeframe
             timerange_start="20230101",
             timerange_end="20230131"
         )

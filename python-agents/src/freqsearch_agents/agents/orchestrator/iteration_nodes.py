@@ -218,16 +218,18 @@ async def submit_backtest_node(
             }
 
         # Build backtest config
+        # Use empty string for exchange to inherit from base_config.json (OKX by default)
+        # Use longer timerange (3 months) to have enough candles for strategies with high startup_candle_count
         bt_config_data = state.get("backtest_config", {})
         backtest_config = BacktestConfig(
-            exchange=bt_config_data.get("exchange", "binance"),
-            pairs=bt_config_data.get("pairs", ["BTC/USDT"]),
-            timeframe=bt_config_data.get("timeframe", "1h"),
-            timerange_start=bt_config_data.get("timerange_start", "20230101"),
-            timerange_end=bt_config_data.get("timerange_end", "20230131"),
-            dry_run_wallet=bt_config_data.get("dry_run_wallet", 1000.0),
-            max_open_trades=bt_config_data.get("max_open_trades", 3),
-            stake_amount=bt_config_data.get("stake_amount", "unlimited"),
+            exchange=bt_config_data.get("exchange", ""),
+            pairs=bt_config_data.get("pairs", []),
+            timeframe=bt_config_data.get("timeframe", ""),
+            timerange_start=bt_config_data.get("timerange_start", "20240101"),
+            timerange_end=bt_config_data.get("timerange_end", "20240401"),
+            dry_run_wallet=bt_config_data.get("dry_run_wallet", 0),
+            max_open_trades=bt_config_data.get("max_open_trades", 0),
+            stake_amount=bt_config_data.get("stake_amount", ""),
         )
 
         # Submit backtest
@@ -237,7 +239,10 @@ async def submit_backtest_node(
                 config=backtest_config,
                 optimization_run_id=run_id,
             )
-            job_id = backtest_response["job_id"]
+            # Response format is {"job": {"id": "...", ...}, ...}
+            job_id = backtest_response.get("job", {}).get("id")
+            if not job_id:
+                raise KeyError("job.id not found in backtest response")
             logger.info(
                 "Backtest submitted",
                 job_id=job_id,

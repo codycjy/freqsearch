@@ -67,8 +67,16 @@ func (b *ConfigBuilder) BuildRuntimeConfig(config domain.BacktestConfig) (*Build
 	}
 	tmpFile.Close()
 
-	b.logger.Debug("Built runtime config",
+	// Log final exchange for debugging
+	finalExchange := "unknown"
+	if exchange, ok := baseConfig["exchange"].(map[string]interface{}); ok {
+		if name, ok := exchange["name"].(string); ok {
+			finalExchange = name
+		}
+	}
+	b.logger.Info("Built runtime config",
 		zap.String("path", tmpFile.Name()),
+		zap.String("final_exchange", finalExchange),
 		zap.Int("override_count", len(config.HyperoptOverrides)),
 	)
 
@@ -80,14 +88,23 @@ func (b *ConfigBuilder) BuildRuntimeConfig(config domain.BacktestConfig) (*Build
 
 // loadBaseConfig loads the base Freqtrade configuration file.
 func (b *ConfigBuilder) loadBaseConfig() (map[string]interface{}, error) {
+	b.logger.Info("Loading base config", zap.String("path", b.baseConfigPath))
+
 	data, err := os.ReadFile(b.baseConfigPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read base config: %w", err)
+		return nil, fmt.Errorf("failed to read base config from %s: %w", b.baseConfigPath, err)
 	}
 
 	var config map[string]interface{}
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse base config: %w", err)
+	}
+
+	// Log the exchange from base config for debugging
+	if exchange, ok := config["exchange"].(map[string]interface{}); ok {
+		if name, ok := exchange["name"].(string); ok {
+			b.logger.Info("Base config exchange", zap.String("exchange", name))
+		}
 	}
 
 	// Deep copy to avoid modifying cached config
@@ -96,43 +113,61 @@ func (b *ConfigBuilder) loadBaseConfig() (map[string]interface{}, error) {
 
 // applyBacktestConfig applies the backtest configuration to the runtime config.
 func (b *ConfigBuilder) applyBacktestConfig(config map[string]interface{}, btConfig domain.BacktestConfig) {
-	// Exchange settings
-	if exchange, ok := config["exchange"].(map[string]interface{}); ok {
-		exchange["name"] = btConfig.Exchange
-	} else {
-		config["exchange"] = map[string]interface{}{
-			"name": btConfig.Exchange,
+	b.logger.Info("Applying backtest config",
+		zap.String("btConfig.Exchange", btConfig.Exchange),
+		zap.Strings("btConfig.Pairs", btConfig.Pairs),
+		zap.String("btConfig.Timeframe", btConfig.Timeframe),
+	)
+
+	// Exchange settings - only override if a non-empty exchange is specified
+	if btConfig.Exchange != "" {
+		if exchange, ok := config["exchange"].(map[string]interface{}); ok {
+			exchange["name"] = btConfig.Exchange
+		} else {
+			config["exchange"] = map[string]interface{}{
+				"name": btConfig.Exchange,
+			}
 		}
 	}
 
-	// Transform pairs for futures trading mode
+	// Transform pairs for futures trading mode - only if pairs are specified
 	// Futures pairs need format: "BTC/USDT:USDT" instead of "BTC/USDT"
-	pairs := btConfig.Pairs
-	if tradingMode, ok := config["trading_mode"].(string); ok && tradingMode == "futures" {
-		// Get stake currency from config (defaults to USDT)
-		stakeCurrency := "USDT"
-		if sc, ok := config["stake_currency"].(string); ok {
-			stakeCurrency = sc
+	if len(btConfig.Pairs) > 0 {
+		pairs := btConfig.Pairs
+		if tradingMode, ok := config["trading_mode"].(string); ok && tradingMode == "futures" {
+			// Get stake currency from config (defaults to USDT)
+			stakeCurrency := "USDT"
+			if sc, ok := config["stake_currency"].(string); ok {
+				stakeCurrency = sc
+			}
+			pairs = transformPairsForFutures(btConfig.Pairs, stakeCurrency)
 		}
-		pairs = transformPairsForFutures(btConfig.Pairs, stakeCurrency)
+
+		// Pairs whitelist
+		if exchange, ok := config["exchange"].(map[string]interface{}); ok {
+			exchange["pair_whitelist"] = pairs
+		}
 	}
 
-	// Pairs whitelist
-	config["exchange"].(map[string]interface{})["pair_whitelist"] = pairs
-
-	// Timeframe
-	config["timeframe"] = btConfig.Timeframe
-
-	// Trading settings
-	config["max_open_trades"] = btConfig.MaxOpenTrades
-
-	// Set stake_amount with default if empty
-	stakeAmount := btConfig.StakeAmount
-	if stakeAmount == "" {
-		stakeAmount = "unlimited"
+	// Timeframe - only if specified
+	if btConfig.Timeframe != "" {
+		config["timeframe"] = btConfig.Timeframe
 	}
-	config["stake_amount"] = stakeAmount
-	config["dry_run_wallet"] = btConfig.DryRunWallet
+
+	// Trading settings - only if non-zero
+	if btConfig.MaxOpenTrades > 0 {
+		config["max_open_trades"] = btConfig.MaxOpenTrades
+	}
+
+	// Set stake_amount only if specified
+	if btConfig.StakeAmount != "" {
+		config["stake_amount"] = btConfig.StakeAmount
+	}
+
+	// Dry run wallet - only if specified
+	if btConfig.DryRunWallet > 0 {
+		config["dry_run_wallet"] = btConfig.DryRunWallet
+	}
 
 	// Disable API server with required fields (Freqtrade requires all fields even when disabled)
 	config["api_server"] = map[string]interface{}{

@@ -31,6 +31,8 @@ class DatabaseSettings(BaseSettings):
 class RabbitMQSettings(BaseSettings):
     """RabbitMQ configuration."""
 
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
     url: str = Field("amqp://guest:guest@localhost:5672/", alias="RABBITMQ_URL")
     exchange_name: str = "freqsearch.events"
     exchange_type: str = "topic"
