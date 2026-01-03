@@ -355,54 +355,8 @@ def serve(
 
         console.print("[green]Agent service started. Press Ctrl+C to stop.[/green]")
 
-        # Check for running optimizations that need to be resumed
-        async def resume_running_optimizations():
-            """Resume any optimizations that were running when the service stopped."""
-            try:
-                from freqsearch_agents.grpc_client import FreqSearchClient
-                from freqsearch_agents.agents.orchestrator.runner import OptimizationRunner
-                from freqsearch_agents.config import get_settings
-
-                settings = get_settings()
-                grpc_address = settings.grpc_server
-
-                async with FreqSearchClient(grpc_address) as client:
-                    # Query for running optimizations
-                    response = await client.list_optimization_runs(status="running")
-                    runs = response.get("runs", [])
-
-                    if runs:
-                        console.print(f"[yellow]Found {len(runs)} running optimization(s) to resume[/yellow]")
-                        for run in runs:
-                            run_id = run.get("id")
-                            base_strategy_id = run.get("base_strategy_id")
-                            max_iterations = run.get("max_iterations", 10)
-
-                            console.print(f"[cyan]Resuming optimization: {run_id}[/cyan]")
-                            agent_tasks["orchestrator"] = f"Resuming: {run_id}"
-
-                            try:
-                                from freqsearch_agents.agents.orchestrator.runner import run_optimization
-                                result = await run_optimization(
-                                    run_id=run_id,
-                                    base_strategy_id=base_strategy_id,
-                                    max_iterations=max_iterations,
-                                    config=run.get("config", {}),
-                                )
-                                console.print(f"[green]Resumed optimization completed: {result.get('termination_reason')}[/green]")
-                            except Exception as e:
-                                console.print(f"[red]Failed to resume optimization {run_id}: {e}[/red]")
-                                logger.exception("Failed to resume optimization", run_id=run_id)
-                            finally:
-                                agent_tasks["orchestrator"] = None
-                    else:
-                        console.print("[dim]No running optimizations to resume[/dim]")
-            except Exception as e:
-                console.print(f"[red]Error checking for running optimizations: {e}[/red]")
-                logger.exception("Error checking for running optimizations")
-
-        # Start resume task
-        tasks.append(asyncio.create_task(resume_running_optimizations()))
+        # Note: Running optimizations are resumed by Go Backend on startup
+        # It will re-publish optimization.started events for any running optimizations
 
         try:
             await asyncio.gather(*tasks)

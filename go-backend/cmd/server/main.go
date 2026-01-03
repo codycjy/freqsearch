@@ -21,6 +21,7 @@ import (
 	"github.com/saltfish/freqsearch/go-backend/internal/db"
 	"github.com/saltfish/freqsearch/go-backend/internal/db/repository"
 	"github.com/saltfish/freqsearch/go-backend/internal/docker"
+	"github.com/saltfish/freqsearch/go-backend/internal/domain"
 	"github.com/saltfish/freqsearch/go-backend/internal/events"
 	"github.com/saltfish/freqsearch/go-backend/internal/scheduler"
 )
@@ -197,6 +198,9 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 		zap.String("http_address", httpAddr),
 	)
 
+	// 10. Resume any running optimizations
+	go resumeRunningOptimizations(ctx, repos, eventPublisher, logger)
+
 	// Wait for shutdown signal
 	<-ctx.Done()
 
@@ -230,6 +234,58 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 	logger.Info("Scout scheduler stopped")
 
 	return nil
+}
+
+// resumeRunningOptimizations re-publishes optimization.started events for any
+// optimizations that were in "running" state when the backend last stopped.
+// This allows Python agents to resume them when they reconnect.
+func resumeRunningOptimizations(ctx context.Context, repos *repository.Repositories, publisher events.Publisher, logger *zap.Logger) {
+	// Wait a bit for RabbitMQ connections to stabilize
+	time.Sleep(2 * time.Second)
+
+	logger.Info("Checking for running optimizations to resume...")
+
+	// Query for running optimizations
+	runningStatus := domain.OptimizationStatusRunning
+	query := domain.OptimizationListQuery{
+		Status:   &runningStatus,
+		Page:     1,
+		PageSize: 100,
+	}
+	runs, _, err := repos.Optimization.List(ctx, query)
+	if err != nil {
+		logger.Error("Failed to list running optimizations", zap.Error(err))
+		return
+	}
+
+	if len(runs) == 0 {
+		logger.Info("No running optimizations to resume")
+		return
+	}
+
+	logger.Info("Found running optimizations to resume", zap.Int("count", len(runs)))
+
+	for _, run := range runs {
+		// Re-publish optimization.started event
+		event := map[string]interface{}{
+			"optimization_run_id": run.ID.String(),
+			"base_strategy_id":    run.BaseStrategyID.String(),
+			"max_iterations":      run.MaxIterations,
+			"config":              run.Config,
+		}
+
+		if err := publisher.Publish(ctx, "optimization.started", event); err != nil {
+			logger.Error("Failed to publish resume event",
+				zap.String("run_id", run.ID.String()),
+				zap.Error(err),
+			)
+		} else {
+			logger.Info("Published resume event for optimization",
+				zap.String("run_id", run.ID.String()),
+				zap.String("base_strategy_id", run.BaseStrategyID.String()),
+			)
+		}
+	}
 }
 
 // initLogger initializes the zap logger based on configuration.
