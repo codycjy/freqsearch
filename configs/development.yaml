@@ -11,7 +11,7 @@ env: development
 # =====================================================
 go_backend:
   grpc_port: 50051
-  http_port: 8080
+  http_port: 8083
 
   # PostgreSQL
   database:
