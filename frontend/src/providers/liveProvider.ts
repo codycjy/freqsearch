@@ -113,8 +113,18 @@ interface LiveProviderConfig {
 /**
  * Default configuration values
  */
+// 自动检测 WebSocket URL：根据当前页面协议和域名构建
+const getDefaultWsUrl = (): string => {
+  if (import.meta.env.VITE_WS_URL) {
+    return import.meta.env.VITE_WS_URL;
+  }
+  // 自动检测：http->ws, https->wss
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/api/v1/ws/events`;
+};
+
 const DEFAULT_CONFIG: Required<LiveProviderConfig> = {
-  wsUrl: import.meta.env.VITE_WS_URL || "ws://localhost:8080/api/v1/ws/events",
+  wsUrl: getDefaultWsUrl(),
   reconnectInterval: 1000,
   maxReconnectInterval: 30000,
   reconnectDecay: 1.5,

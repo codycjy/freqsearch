@@ -255,17 +255,19 @@ async def submit_backtest_node(
         base_strategy_id = state["base_strategy_id"]
 
         # Get backtest configuration from state's optimization_config or use defaults
+        # Use empty string for exchange to inherit from base_config.json (OKX by default)
+        # Use longer timerange (3 months) to have enough candles for strategies with high startup_candle_count
         opt_config = state.get("optimization_config", {})
         backtest_config_data = opt_config.get("backtest_config", {})
         backtest_cfg = BacktestConfig(
-            exchange=backtest_config_data.get("exchange", "binance"),
-            pairs=backtest_config_data.get("pairs", ["BTC/USDT"]),
-            timeframe=backtest_config_data.get("timeframe", "1h"),
-            timerange_start=backtest_config_data.get("timerange_start", "20230101"),
-            timerange_end=backtest_config_data.get("timerange_end", "20230131"),
-            dry_run_wallet=backtest_config_data.get("dry_run_wallet", 1000.0),
-            max_open_trades=backtest_config_data.get("max_open_trades", 3),
-            stake_amount=backtest_config_data.get("stake_amount", "unlimited"),
+            exchange=backtest_config_data.get("exchange", ""),
+            pairs=backtest_config_data.get("pairs", []),
+            timeframe=backtest_config_data.get("timeframe", ""),
+            timerange_start=backtest_config_data.get("timerange_start", "20240101"),
+            timerange_end=backtest_config_data.get("timerange_end", "20240401"),
+            dry_run_wallet=backtest_config_data.get("dry_run_wallet", 0),
+            max_open_trades=backtest_config_data.get("max_open_trades", 0),
+            stake_amount=backtest_config_data.get("stake_amount", ""),
         )
 
         # Create strategy in backend and submit backtest via gRPC

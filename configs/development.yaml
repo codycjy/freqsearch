@@ -11,15 +11,15 @@ env: development
 # =====================================================
 go_backend:
   grpc_port: 50051
-  http_port: 8080
+  http_port: 8083
 
   # PostgreSQL
   database:
     host: localhost
     port: 5432
-    user: postgres
-    password: postgres
-    name: freqsearch_dev
+    user: freqsearch
+    password: freqsearch_dev
+    name: freqsearch
     sslmode: disable
     max_connections: 25
     max_idle_connections: 5
@@ -42,6 +42,7 @@ go_backend:
     network: freqsearch_network
     data_mount: /data/market
     strategy_mount: /data/strategies
+    base_config_path: /var/tmp/vibe-kanban/worktrees/7f10-run-the-infra-an/freqsearch/configs/freqtrade/base_config.json
 
 # =====================================================
 # Python Agent Settings
@@ -96,5 +97,5 @@ freqtrade:
 # Logging
 # =====================================================
 logging:
-  level: DEBUG
+  level: debug
   format: console  # console or json

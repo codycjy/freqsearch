@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+// 使用相对路径，自动适配当前域名和端口
+const API_URL = import.meta.env.VITE_API_URL || '/api/v1';
 
 export const axiosInstance = axios.create({
   baseURL: API_URL,

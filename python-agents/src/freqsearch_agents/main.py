@@ -355,6 +355,9 @@ def serve(
 
         console.print("[green]Agent service started. Press Ctrl+C to stop.[/green]")
 
+        # Note: Running optimizations are resumed by Go Backend on startup
+        # It will re-publish optimization.started events for any running optimizations
+
         try:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
