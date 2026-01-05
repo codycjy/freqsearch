@@ -198,8 +198,9 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 		zap.String("http_address", httpAddr),
 	)
 
-	// 10. Resume any running optimizations
-	go resumeRunningOptimizations(ctx, repos, eventPublisher, logger)
+	// 10. Resume pending and running optimizations, and recover stuck jobs
+	go resumeOptimizations(ctx, repos, eventPublisher, logger)
+	go recoverStuckBacktestJobs(ctx, repos, dockerManager, logger)
 
 	// Wait for shutdown signal
 	<-ctx.Done()
@@ -236,55 +237,137 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 	return nil
 }
 
-// resumeRunningOptimizations re-publishes optimization.started events for any
-// optimizations that were in "running" state when the backend last stopped.
+// resumeOptimizations re-publishes optimization.started events for any
+// optimizations that were in "pending" or "running" state when the backend last stopped.
 // This allows Python agents to resume them when they reconnect.
-func resumeRunningOptimizations(ctx context.Context, repos *repository.Repositories, publisher events.Publisher, logger *zap.Logger) {
+func resumeOptimizations(ctx context.Context, repos *repository.Repositories, publisher events.Publisher, logger *zap.Logger) {
 	// Wait a bit for RabbitMQ connections to stabilize
 	time.Sleep(2 * time.Second)
 
-	logger.Info("Checking for running optimizations to resume...")
+	logger.Info("Checking for optimizations to resume...")
 
-	// Query for running optimizations
-	runningStatus := domain.OptimizationStatusRunning
-	query := domain.OptimizationListQuery{
-		Status:   &runningStatus,
-		Page:     1,
-		PageSize: 100,
-	}
-	runs, _, err := repos.Optimization.List(ctx, query)
-	if err != nil {
-		logger.Error("Failed to list running optimizations", zap.Error(err))
-		return
+	// Resume both pending and running optimizations
+	statusesToResume := []domain.OptimizationStatus{
+		domain.OptimizationStatusPending,
+		domain.OptimizationStatusRunning,
 	}
 
-	if len(runs) == 0 {
-		logger.Info("No running optimizations to resume")
-		return
-	}
-
-	logger.Info("Found running optimizations to resume", zap.Int("count", len(runs)))
-
-	for _, run := range runs {
-		// Re-publish optimization.started event
-		event := map[string]interface{}{
-			"optimization_run_id": run.ID.String(),
-			"base_strategy_id":    run.BaseStrategyID.String(),
-			"max_iterations":      run.MaxIterations,
-			"config":              run.Config,
+	totalResumed := 0
+	for _, status := range statusesToResume {
+		statusCopy := status
+		query := domain.OptimizationListQuery{
+			Status:   &statusCopy,
+			Page:     1,
+			PageSize: 100,
 		}
-
-		if err := publisher.Publish(ctx, "optimization.started", event); err != nil {
-			logger.Error("Failed to publish resume event",
-				zap.String("run_id", run.ID.String()),
+		runs, _, err := repos.Optimization.List(ctx, query)
+		if err != nil {
+			logger.Error("Failed to list optimizations",
+				zap.String("status", string(status)),
 				zap.Error(err),
 			)
+			continue
+		}
+
+		for _, run := range runs {
+			// Re-publish optimization.started event
+			event := map[string]interface{}{
+				"optimization_run_id": run.ID.String(),
+				"base_strategy_id":    run.BaseStrategyID.String(),
+				"max_iterations":      run.MaxIterations,
+				"config":              run.Config,
+			}
+
+			if err := publisher.Publish(ctx, "optimization.started", event); err != nil {
+				logger.Error("Failed to publish resume event",
+					zap.String("run_id", run.ID.String()),
+					zap.String("status", string(status)),
+					zap.Error(err),
+				)
+			} else {
+				logger.Info("Published resume event for optimization",
+					zap.String("run_id", run.ID.String()),
+					zap.String("base_strategy_id", run.BaseStrategyID.String()),
+					zap.String("status", string(status)),
+				)
+				totalResumed++
+			}
+		}
+	}
+
+	if totalResumed == 0 {
+		logger.Info("No optimizations to resume")
+	} else {
+		logger.Info("Resumed optimizations", zap.Int("count", totalResumed))
+	}
+}
+
+// recoverStuckBacktestJobs marks jobs stuck in "running" state as failed
+// if their containers are no longer running.
+func recoverStuckBacktestJobs(ctx context.Context, repos *repository.Repositories, dockerMgr docker.Manager, logger *zap.Logger) {
+	logger.Info("Checking for stuck backtest jobs...")
+
+	// Get all running jobs
+	runningJobs, err := repos.BacktestJob.GetRunningJobs(ctx)
+	if err != nil {
+		logger.Error("Failed to get running jobs", zap.Error(err))
+		return
+	}
+
+	if len(runningJobs) == 0 {
+		logger.Info("No stuck backtest jobs found")
+		return
+	}
+
+	logger.Info("Found running backtest jobs to check", zap.Int("count", len(runningJobs)))
+
+	recoveredCount := 0
+	for _, job := range runningJobs {
+		if job.ContainerID == nil || *job.ContainerID == "" {
+			// No container ID - mark as failed
+			logger.Warn("Job has no container ID, marking as failed",
+				zap.String("job_id", job.ID.String()),
+			)
+			if err := repos.BacktestJob.MarkFailed(ctx, job.ID, "container not found on startup recovery"); err != nil {
+				logger.Error("Failed to mark job as failed", zap.String("job_id", job.ID.String()), zap.Error(err))
+			} else {
+				recoveredCount++
+			}
+			continue
+		}
+
+		// Check if container is still running
+		isRunning, err := dockerMgr.IsContainerRunning(ctx, *job.ContainerID)
+		if err != nil {
+			logger.Warn("Failed to check container status",
+				zap.String("job_id", job.ID.String()),
+				zap.String("container_id", *job.ContainerID),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		if !isRunning {
+			// Container gone - mark job as failed
+			logger.Warn("Container no longer exists, marking job as failed",
+				zap.String("job_id", job.ID.String()),
+				zap.String("container_id", *job.ContainerID),
+			)
+			if err := repos.BacktestJob.MarkFailed(ctx, job.ID, "container disappeared during restart"); err != nil {
+				logger.Error("Failed to mark job as failed", zap.String("job_id", job.ID.String()), zap.Error(err))
+			} else {
+				recoveredCount++
+			}
 		} else {
-			logger.Info("Published resume event for optimization",
-				zap.String("run_id", run.ID.String()),
-				zap.String("base_strategy_id", run.BaseStrategyID.String()),
+			logger.Info("Container still running, will be handled by timeout watcher",
+				zap.String("job_id", job.ID.String()),
+				zap.String("container_id", *job.ContainerID),
 			)
 		}
+	}
+
+	if recoveredCount > 0 {
+		logger.Info("Recovered stuck backtest jobs", zap.Int("count", recoveredCount))
 	}
 }
 

@@ -973,6 +973,18 @@ func (h *Handler) HandleControlOptimization(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Fetch current optimization to validate transition
+	oldRun, err := h.repos.Optimization.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			writeError(w, http.StatusNotFound, err, "optimization run not found")
+			return
+		}
+		h.logger.Error("Failed to get optimization run", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, err, "failed to get optimization run")
+		return
+	}
+
 	// Normalize action - accept both simple names and protobuf enum names
 	action := strings.ToLower(req.Action)
 	action = strings.TrimPrefix(action, "optimization_action_")
@@ -980,10 +992,27 @@ func (h *Handler) HandleControlOptimization(w http.ResponseWriter, r *http.Reque
 	var newStatus domain.OptimizationStatus
 	switch action {
 	case "pause":
+		if oldRun.Status != domain.OptimizationStatusRunning {
+			writeError(w, http.StatusBadRequest, errors.New("invalid state transition"),
+				"can only pause running optimizations")
+			return
+		}
 		newStatus = domain.OptimizationStatusPaused
 	case "resume":
+		if oldRun.Status != domain.OptimizationStatusPaused {
+			writeError(w, http.StatusBadRequest, errors.New("invalid state transition"),
+				"can only resume paused optimizations")
+			return
+		}
 		newStatus = domain.OptimizationStatusRunning
 	case "cancel":
+		if oldRun.Status == domain.OptimizationStatusCompleted ||
+		   oldRun.Status == domain.OptimizationStatusFailed ||
+		   oldRun.Status == domain.OptimizationStatusCancelled {
+			writeError(w, http.StatusBadRequest, errors.New("invalid state transition"),
+				"cannot cancel already finished optimization")
+			return
+		}
 		newStatus = domain.OptimizationStatusCancelled
 	case "complete":
 		newStatus = domain.OptimizationStatusCompleted
@@ -1009,6 +1038,16 @@ func (h *Handler) HandleControlOptimization(w http.ResponseWriter, r *http.Reque
 		h.logger.Error("Failed to get optimization run after control", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, err, "failed to get optimization run")
 		return
+	}
+
+	// Publish optimization.started event on resume to trigger Python orchestrator
+	if action == "resume" && h.eventPublisher != nil {
+		if err := h.eventPublisher.PublishOptimizationStarted(run); err != nil {
+			h.logger.Error("Failed to publish optimization started event on resume",
+				zap.Error(err),
+				zap.String("run_id", run.ID.String()))
+			// Don't fail the request, just log the error
+		}
 	}
 
 	writeJSON(w, http.StatusOK, ControlOptimizationResponse{

@@ -132,6 +132,7 @@ async def validate_and_engineer_node(
             )
             return {
                 "engineer_result": engineer_result,
+                "generated_code": generated_code,
                 "validation_passed": True,
                 "validation_retry_count": validation_retry_count,
             }
@@ -211,10 +212,11 @@ async def submit_backtest_node(
                 iteration=iteration,
             )
         except Exception as e:
-            logger.error("Failed to create strategy", error=str(e))
+            logger.exception("Strategy creation failed", error=str(e))
             return {
                 "should_terminate": True,
-                "termination_reason": "strategy_creation_failed",
+                "termination_reason": f"strategy_creation_failed: {str(e)[:200]}",
+                "error_details": str(e),
             }
 
         # Build backtest config
@@ -297,9 +299,17 @@ async def wait_for_result_node(
         while total_wait < BACKTEST_MAX_WAIT:
             try:
                 job_response = await client.get_backtest_job(job_id)
-                status = job_response.get("status", "unknown")
+                # Response is nested: {"job": {"status": "JOB_STATUS_..."}}
+                job_data = job_response.get("job", {})
+                status = job_data.get("status", "unknown")
 
-                if status == "completed":
+                logger.debug(
+                    "Polling backtest status",
+                    job_id=job_id,
+                    raw_status=status,
+                )
+
+                if status == "JOB_STATUS_COMPLETED":
                     # Get full result
                     result_response = await client.get_backtest_result(job_id)
                     backtest_result = result_response.get("result", {})
@@ -312,8 +322,8 @@ async def wait_for_result_node(
                     )
                     return {"backtest_result": backtest_result}
 
-                elif status == "failed":
-                    error_msg = job_response.get("error", "Unknown backtest error")
+                elif status == "JOB_STATUS_FAILED":
+                    error_msg = job_data.get("error", "Unknown backtest error")
                     logger.error(
                         "Backtest failed",
                         job_id=job_id,
@@ -323,7 +333,7 @@ async def wait_for_result_node(
                         "backtest_result": {"error": error_msg, "status": "failed"},
                     }
 
-                elif status == "cancelled":
+                elif status == "JOB_STATUS_CANCELLED":
                     logger.warning("Backtest was cancelled", job_id=job_id)
                     return {
                         "should_terminate": True,
@@ -339,8 +349,14 @@ async def wait_for_result_node(
                 await asyncio.sleep(BACKTEST_POLL_INTERVAL)
                 total_wait += BACKTEST_POLL_INTERVAL
 
-    # Timeout
-    logger.error("Backtest timeout", job_id=job_id, waited=total_wait)
+        # Timeout - cancel the zombie backtest job
+        logger.error("Backtest timeout", job_id=job_id, waited=total_wait)
+        try:
+            await client.cancel_backtest(job_id)
+            logger.info("Cancelled timed-out backtest", job_id=job_id)
+        except Exception as cancel_err:
+            logger.warning("Failed to cancel timed-out backtest", job_id=job_id, error=str(cancel_err))
+
     return {
         "should_terminate": True,
         "termination_reason": "backtest_timeout",
@@ -383,14 +399,18 @@ async def invoke_analyst_node(
     )
 
     try:
+        # Enrich backtest result with optimization context
+        enriched_result = {
+            **backtest_result,
+            "job_id": state.get("backtest_job_id", ""),
+            "strategy_id": state.get("generated_strategy_id", state["current_strategy_id"]),
+            "optimization_run_id": run_id,
+            "current_iteration": iteration,
+        }
+
         analyst_result = await run_analyst(
-            job_id=state.get("backtest_job_id", ""),
-            strategy_id=state.get("generated_strategy_id", state["current_strategy_id"]),
-            backtest_result=backtest_result,
-            optimization_run_id=run_id,
-            current_iteration=iteration,
-            max_iterations=10,  # Will be checked by external runner
-            thread_id=f"{run_id}-analyst-{iteration}",
+            backtest_result=enriched_result,
+            strategy_code=state.get("generated_code"),
         )
 
         decision = analyst_result.get("decision", "modify")

@@ -72,16 +72,17 @@ const transformOptimizationRun = (run: any): OptimizationRun => {
 };
 
 /**
- * Transform strategy list item from nested { strategy, best_result } to flat structure
- * API returns: { strategy: { id, name, ... }, best_result: { ... } }
- * Frontend expects: { id, name, ..., best_result: { ... } }
+ * Transform strategy list item from nested { strategy, best_result, backtest_count } to flat structure
+ * API returns: { strategy: { id, name, ... }, best_result: { ... }, backtest_count: number }
+ * Frontend expects: { id, name, ..., best_result: { ... }, backtest_count: number }
  */
 const transformStrategyListItem = (item: any): any => {
   if (item.strategy) {
-    // Nested structure from list endpoint
+    // Nested structure from list endpoint - flatten and preserve backtest_count
     return {
       ...item.strategy,
       best_result: item.best_result,
+      backtest_count: item.backtest_count ?? 0,
     };
   }
   // Already flat (from getOne or already transformed)

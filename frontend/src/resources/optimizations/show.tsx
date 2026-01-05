@@ -47,6 +47,13 @@ const statusLabels: Record<OptimizationStatus, string> = {
 export const OptimizationShow = () => {
   const { queryResult } = useShow<OptimizationRun>({
     liveMode: 'auto',
+    queryOptions: {
+      refetchInterval: (data) => {
+        const status = data?.data?.status;
+        // Only poll if optimization is running
+        return status === 'OPTIMIZATION_STATUS_RUNNING' ? 3000 : false;
+      },
+    },
   });
   const { data, isLoading } = queryResult;
   const record = data?.data;
@@ -135,9 +142,9 @@ export const OptimizationShow = () => {
     },
     {
       title: 'Created',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (date: string) => new Date(date).toLocaleString(),
+      dataIndex: 'timestamp',
+      key: 'timestamp',
+      render: (date: string) => date ? new Date(date).toLocaleString() : 'N/A',
     },
   ];
 

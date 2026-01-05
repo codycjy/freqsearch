@@ -90,6 +90,17 @@ class OrchestratorRunner:
 
             # Main iteration loop
             while context.has_iterations_remaining():
+                # Reload context to check for external cancellation/pause
+                context = await OptimizationContext.load(client, run_id)
+                if context.status in ("cancelled", "paused", "completed", "failed"):
+                    logger.info(
+                        "Optimization stopped externally",
+                        status=context.status,
+                        run_id=run_id,
+                        iteration=context.current_iteration,
+                    )
+                    break
+
                 logger.info(
                     "Starting iteration",
                     run_id=run_id,
@@ -155,26 +166,67 @@ class OrchestratorRunner:
                         iteration=context.current_iteration,
                         error=str(e),
                     )
-                    await client.control_optimization(
-                        run_id,
-                        "fail",
-                        termination_reason=f"iteration_exception: {str(e)}",
-                    )
+                    try:
+                        await client.control_optimization(
+                            run_id,
+                            "fail",
+                            termination_reason=f"iteration_exception: {str(e)}",
+                        )
+                    except Exception as control_error:
+                        logger.error(
+                            "Failed to mark optimization as failed after exception",
+                            run_id=run_id,
+                            original_error=str(e),
+                            control_error=str(control_error),
+                        )
+                        # Continue anyway - return result to caller
                     return self._build_result(context, "exception", error=str(e))
 
-            # Max iterations reached
-            logger.info(
-                "Max iterations reached",
-                run_id=run_id,
-                iterations=context.current_iteration,
-            )
-            await client.control_optimization(
-                run_id,
-                "complete",
-                termination_reason="max_iterations",
-                best_strategy_id=context.best_strategy_id,
-            )
-            return self._build_result(context, "max_iterations")
+            # Check why loop ended
+            if context.status == "cancelled":
+                logger.info(
+                    "Optimization cancelled by user",
+                    run_id=run_id,
+                    iterations=context.current_iteration,
+                )
+                return self._build_result(context, "cancelled")
+            elif context.status == "paused":
+                logger.info(
+                    "Optimization paused",
+                    run_id=run_id,
+                    iterations=context.current_iteration,
+                )
+                return self._build_result(context, "paused")
+            elif context.status in ("completed", "failed"):
+                logger.info(
+                    "Optimization already finished",
+                    run_id=run_id,
+                    status=context.status,
+                    iterations=context.current_iteration,
+                )
+                return self._build_result(context, context.status)
+            else:
+                # Max iterations reached
+                logger.info(
+                    "Max iterations reached",
+                    run_id=run_id,
+                    iterations=context.current_iteration,
+                )
+                try:
+                    await client.control_optimization(
+                        run_id,
+                        "complete",
+                        termination_reason="max_iterations",
+                        best_strategy_id=context.best_strategy_id,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to mark optimization as complete after max iterations",
+                        run_id=run_id,
+                        error=str(e),
+                    )
+                    # Continue anyway - return result to caller
+                return self._build_result(context, "max_iterations")
 
     async def resume_optimization(self, run_id: str) -> dict[str, Any]:
         """Resume an optimization from where it left off.
@@ -198,10 +250,18 @@ class OrchestratorRunner:
                 )
                 return self._build_result(context, "already_complete")
 
+            # ISSUE #2 FIX: Use loaded context's max_iterations value
+            logger.info(
+                "Resuming with loaded configuration",
+                run_id=run_id,
+                max_iterations=context.max_iterations,
+                current_iteration=context.current_iteration,
+            )
+
             return await self.run_optimization(
                 run_id=run_id,
                 base_strategy_id=context.base_strategy_id,
-                max_iterations=context.max_iterations,
+                max_iterations=context.max_iterations,  # Use loaded value, not default
             )
 
     def _build_result(

@@ -188,18 +188,52 @@ class OptimizationContext:
         if result.get("should_terminate"):
             reason = result.get("termination_reason", "unknown")
             if reason == "approved":
-                await client.control_optimization(
-                    self.run_id,
-                    "complete",
-                    termination_reason=reason,
-                    best_strategy_id=self.best_strategy_id,
-                )
+                try:
+                    await client.control_optimization(
+                        self.run_id,
+                        "complete",
+                        termination_reason=reason,
+                        best_strategy_id=self.best_strategy_id,
+                    )
+                    # ISSUE #1 FIX: Sync local status after successful update
+                    self.status = "completed"
+                    logger.info(
+                        "Optimization marked as completed",
+                        run_id=self.run_id,
+                        reason=reason,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to complete optimization",
+                        run_id=self.run_id,
+                        action="complete",
+                        reason=reason,
+                        error=str(e),
+                    )
+                    raise
             elif reason in ("archived", "validation_failed"):
-                await client.control_optimization(
-                    self.run_id,
-                    "fail",
-                    termination_reason=reason,
-                )
+                try:
+                    await client.control_optimization(
+                        self.run_id,
+                        "fail",
+                        termination_reason=reason,
+                    )
+                    # ISSUE #1 FIX: Sync local status after successful update
+                    self.status = "failed"
+                    logger.info(
+                        "Optimization marked as failed",
+                        run_id=self.run_id,
+                        reason=reason,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to fail optimization",
+                        run_id=self.run_id,
+                        action="fail",
+                        reason=reason,
+                        error=str(e),
+                    )
+                    raise
             # max_iterations is handled by the runner
 
         logger.info(
@@ -218,9 +252,12 @@ class OptimizationContext:
         return self.status in ("completed", "failed", "cancelled")
 
     def has_iterations_remaining(self) -> bool:
-        """Check if there are iterations remaining.
+        """Check if there are iterations remaining and not cancelled/stopped.
 
         Returns:
-            True if current_iteration < max_iterations
+            True if current_iteration < max_iterations and status allows continuing
         """
+        # Don't continue if optimization was cancelled, paused, or already complete
+        if self.status in ("cancelled", "paused", "completed", "failed"):
+            return False
         return self.current_iteration < self.max_iterations

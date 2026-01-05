@@ -21,7 +21,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import type { StrategyWithMetrics } from '@providers/types';
+import type { Strategy } from '@providers/types';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -37,31 +37,33 @@ const { Title, Text, Paragraph } = Typography;
  */
 export const StrategyShow: React.FC = () => {
   const navigate = useNavigate();
-  const { queryResult } = useShow<StrategyWithMetrics>();
+  const { queryResult } = useShow<Strategy>();
   const { data, isLoading } = queryResult;
 
-  const record = data?.data;
-  const strategy = record?.strategy;
-  const metrics = record?.best_result;
+  // Note: dataProvider.getOne for strategies returns unwrapped strategy directly
+  const strategy = data?.data;
+  const metrics = (data?.data as any)?.best_result;
 
-  // Fetch recent backtests for this strategy
+  // Fetch recent backtests for this strategy (including child strategies from optimization)
   const { data: backtestsData } = useCustom({
     url: `backtests`,
     method: 'get',
     config: {
       query: {
         strategy_id: strategy?.id,
-        limit: 5,
+        include_descendants: true,
+        limit: 10,
         sort: 'created_at',
         order: 'desc',
       },
     },
     queryOptions: {
       enabled: !!strategy?.id,
+      refetchInterval: 5000, // Poll every 5 seconds for new backtests
     },
   });
 
-  const backtests = backtestsData?.data?.data || [];
+  const backtests = backtestsData?.data?.backtests || [];
 
   // Fetch parent strategy if exists
   const { data: parentData } = useCustom({
@@ -88,7 +90,8 @@ export const StrategyShow: React.FC = () => {
     },
   });
 
-  const childStrategies = childrenData?.data?.data || [];
+  // API returns { strategies: [...] } which contains transformed flat items
+  const childStrategies = childrenData?.data?.strategies || childrenData?.data?.data || [];
 
   const handleRunBacktest = () => {
     navigate(`/backtests/create?strategy_id=${strategy?.id}`);
@@ -191,7 +194,7 @@ export const StrategyShow: React.FC = () => {
           </Col>
           <Col span={12}>
             <Text strong>Backtests Run: </Text>
-            <Tag color="green">{record?.backtest_count || 0}</Tag>
+            <Tag color="green">{(strategy as any)?.backtest_count ?? 0}</Tag>
           </Col>
           <Col span={12}>
             <Text strong>Created: </Text>
@@ -263,11 +266,11 @@ export const StrategyShow: React.FC = () => {
               <Space wrap style={{ marginTop: 8 }}>
                 {childStrategies.map((child: any) => (
                   <Button
-                    key={child.strategy.id}
+                    key={child.id}
                     type="link"
-                    onClick={() => navigate(`/strategies/show/${child.strategy.id}`)}
+                    onClick={() => navigate(`/strategies/show/${child.id}`)}
                   >
-                    {child.strategy.name} (Gen {child.strategy.generation})
+                    {child.name} (Gen {child.generation})
                   </Button>
                 ))}
               </Space>

@@ -242,16 +242,34 @@ func (s *Server) SubmitBacktest(ctx context.Context, req *pb.SubmitBacktestReque
 		if err != nil {
 			s.logger.Warn("Failed to get optimization run for iteration", zap.Error(err), zap.String("run_id", optRunID.String()))
 		} else {
+			// Check if optimization is still running
+			if optRun.Status != domain.OptimizationStatusRunning {
+				// Roll back the job creation by marking it as failed
+				if failErr := s.repos.BacktestJob.MarkFailed(ctx, job.ID, "optimization is not running"); failErr != nil {
+					s.logger.Error("Failed to rollback job after optimization status check",
+						zap.Error(failErr),
+						zap.String("job_id", job.ID.String()))
+				}
+				return nil, status.Errorf(grpccodes.FailedPrecondition,
+					"cannot submit backtest: optimization is not running (status: %s)", optRun.Status)
+			}
+
 			// Create iteration record (iteration_number = current_iteration + 1)
 			iteration := domain.NewOptimizationIteration(*optRunID, optRun.CurrentIteration+1, strategyID, job.ID)
 			if err := s.repos.Optimization.AddIteration(ctx, iteration); err != nil {
-				s.logger.Warn("Failed to create optimization iteration", zap.Error(err), zap.String("run_id", optRunID.String()))
-			} else {
-				s.logger.Info("Created optimization iteration",
-					zap.String("run_id", optRunID.String()),
-					zap.Int("iteration_number", iteration.IterationNumber),
-					zap.String("job_id", job.ID.String()))
+				// Roll back the job creation by marking it as failed
+				if failErr := s.repos.BacktestJob.MarkFailed(ctx, job.ID, "failed to create iteration record"); failErr != nil {
+					s.logger.Error("Failed to rollback job after iteration creation failure",
+						zap.Error(failErr),
+						zap.String("job_id", job.ID.String()))
+				}
+				s.logger.Error("Failed to create optimization iteration", zap.Error(err), zap.String("run_id", optRunID.String()))
+				return nil, status.Errorf(grpccodes.Internal, "failed to create iteration: %v", err)
 			}
+			s.logger.Info("Created optimization iteration",
+				zap.String("run_id", optRunID.String()),
+				zap.Int("iteration_number", iteration.IterationNumber),
+				zap.String("job_id", job.ID.String()))
 		}
 	}
 

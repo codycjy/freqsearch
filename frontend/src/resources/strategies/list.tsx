@@ -173,10 +173,10 @@ export const StrategyList: React.FC = () => {
         />
 
         <Table.Column
-          dataIndex={['best_result', 'backtest_count']}
+          dataIndex="backtest_count"
           title="Backtests"
           align="right"
-          render={(value) => <Tag color="blue">{value || 0}</Tag>}
+          render={(value?: number) => <Tag color="blue">{value ?? 0}</Tag>}
         />
 
         <Table.Column

@@ -258,12 +258,15 @@ func (r *optimizationRepo) UpdateStatus(
 				status = $2,
 				completed_at = NOW()
 			WHERE id = $1
+			AND status NOT IN ('completed', 'failed', 'cancelled')
 		`
 	} else {
 		query = `
 			UPDATE optimization_runs SET
-				status = $2
+				status = $2,
+				updated_at = NOW()
 			WHERE id = $1
+			AND status NOT IN ('completed', 'failed', 'cancelled')
 		`
 	}
 
@@ -273,6 +276,19 @@ func (r *optimizationRepo) UpdateStatus(
 	}
 
 	if result.RowsAffected() == 0 {
+		// Check if optimization exists and its current status
+		var currentStatus string
+		err := r.pool.QueryRow(ctx, "SELECT status FROM optimization_runs WHERE id = $1", id).Scan(&currentStatus)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domain.NewNotFoundError("optimization_run", id.String())
+			}
+			return fmt.Errorf("failed to check optimization status: %w", err)
+		}
+		// If status is terminal, return specific error
+		if currentStatus == "completed" || currentStatus == "failed" || currentStatus == "cancelled" {
+			return fmt.Errorf("optimization %s cannot be updated: already in terminal state %s", id, currentStatus)
+		}
 		return domain.NewNotFoundError("optimization_run", id.String())
 	}
 

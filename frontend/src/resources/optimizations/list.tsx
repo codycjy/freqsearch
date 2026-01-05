@@ -37,6 +37,9 @@ export const OptimizationList = () => {
       pageSize: 20,
     },
     liveMode: 'auto',
+    queryOptions: {
+      refetchInterval: 5000, // Poll every 5 seconds for running optimizations
+    },
   });
 
   const handleControlSuccess = () => {

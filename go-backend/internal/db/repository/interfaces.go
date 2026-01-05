@@ -91,6 +91,9 @@ type BacktestJobRepository interface {
 
 	// IncrementRetryCount increments the retry count for a job.
 	IncrementRetryCount(ctx context.Context, id uuid.UUID) error
+
+	// MarkRunningJobsFailed marks all running jobs as failed (used for recovery on restart).
+	MarkRunningJobsFailed(ctx context.Context, reason string) (int64, error)
 }
 
 // BacktestResultRepository defines the interface for backtest result data access.

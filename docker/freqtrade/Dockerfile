@@ -10,7 +10,8 @@ RUN pip install --no-cache-dir \
     pandas-ta
 
 # Create validation script with proper permissions
-COPY --chmod=755 validate_strategy.py /opt/validate_strategy.py
+COPY validate_strategy.py /opt/validate_strategy.py
+RUN chmod 755 /opt/validate_strategy.py
 
 # Verify installation
 RUN python -c "from technical.indicators import cmf, laguerre; print('technical OK')" && \

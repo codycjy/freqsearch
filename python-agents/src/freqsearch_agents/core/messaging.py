@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import random
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -15,6 +16,34 @@ import structlog
 from ..config import get_settings
 
 logger = structlog.get_logger(__name__)
+
+# Retry configuration constants
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 1.0  # seconds
+MAX_RETRY_DELAY = 30.0  # seconds
+BACKOFF_MULTIPLIER = 2.0
+
+
+def calculate_retry_delay(retry_count: int) -> float:
+    """Calculate exponential backoff delay with jitter.
+
+    Args:
+        retry_count: Current retry attempt number (0-indexed)
+
+    Returns:
+        Delay in seconds with exponential backoff and ±25% jitter
+    """
+    # Calculate exponential backoff: delay = initial * (multiplier ^ retry_count)
+    delay = INITIAL_RETRY_DELAY * (BACKOFF_MULTIPLIER ** retry_count)
+
+    # Cap at maximum delay
+    delay = min(delay, MAX_RETRY_DELAY)
+
+    # Add jitter (±25% randomization to prevent thundering herd)
+    jitter = delay * 0.25 * (2 * random.random() - 1)
+    final_delay = delay + jitter
+
+    return max(0.1, final_delay)  # Ensure minimum 100ms delay
 
 
 # Event routing keys
@@ -62,10 +91,14 @@ class Events:
 class MessageBroker:
     """RabbitMQ message broker for agent communication."""
 
+    # Maximum retry count before sending to dead letter queue
+    MAX_RETRIES = 3
+
     def __init__(self) -> None:
         self._connection: AbstractConnection | None = None
         self._channel: AbstractChannel | None = None
         self._exchange: AbstractExchange | None = None
+        self._dlx_exchange: AbstractExchange | None = None
         self._settings = get_settings()
 
     async def connect(self) -> None:
@@ -79,9 +112,17 @@ class MessageBroker:
         self._channel = await self._connection.channel()
         await self._channel.set_qos(prefetch_count=self._settings.rabbitmq.prefetch_count)
 
-        # Declare exchange
+        # Declare main exchange
         self._exchange = await self._channel.declare_exchange(
             self._settings.rabbitmq.exchange_name,
+            ExchangeType.TOPIC,
+            durable=True,
+        )
+
+        # Declare dead letter exchange for failed messages
+        dlx_name = f"{self._settings.rabbitmq.exchange_name}.dlx"
+        self._dlx_exchange = await self._channel.declare_exchange(
+            dlx_name,
             ExchangeType.TOPIC,
             durable=True,
         )
@@ -89,6 +130,7 @@ class MessageBroker:
         logger.info(
             "Connected to RabbitMQ",
             exchange=self._settings.rabbitmq.exchange_name,
+            dlx_exchange=dlx_name,
         )
 
     async def disconnect(self) -> None:
@@ -133,6 +175,11 @@ class MessageBroker:
     ) -> None:
         """Subscribe to messages with a specific routing key.
 
+        Implements retry logic with dead letter queue:
+        - Messages are retried up to MAX_RETRIES times
+        - After max retries, messages go to dead letter queue
+        - Successful processing results in immediate ack
+
         Args:
             routing_key: Routing key pattern (e.g., "strategy.*")
             queue_name: Name of the queue to create/use
@@ -141,8 +188,21 @@ class MessageBroker:
         if self._channel is None:
             await self.connect()
 
-        # Declare queue
-        queue = await self._channel.declare_queue(queue_name, durable=True)
+        # Declare dead letter queue first
+        dlx_name = f"{self._settings.rabbitmq.exchange_name}.dlx"
+        dlq_name = f"{queue_name}.dlq"
+        dlq = await self._channel.declare_queue(dlq_name, durable=True)
+        await dlq.bind(self._dlx_exchange, routing_key=routing_key)
+
+        # Declare main queue with dead letter exchange
+        queue = await self._channel.declare_queue(
+            queue_name,
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": dlx_name,
+                "x-dead-letter-routing-key": routing_key,
+            },
+        )
 
         # Bind queue to exchange with routing key
         await queue.bind(self._exchange, routing_key=routing_key)
@@ -151,6 +211,7 @@ class MessageBroker:
             "Subscribed to messages",
             routing_key=routing_key,
             queue=queue_name,
+            dlq=dlq_name,
         )
 
         # Start consuming
@@ -161,26 +222,85 @@ class MessageBroker:
         )
         async with queue.iterator() as queue_iter:
             async for message in queue_iter:
+                # Get retry count from headers
+                headers = message.headers or {}
+                retry_count = headers.get("x-retry-count", 0)
+
                 logger.info(
                     "Received message",
                     routing_key=message.routing_key,
                     correlation_id=message.correlation_id,
+                    retry_count=retry_count,
                 )
-                async with message.process():
-                    try:
-                        body = json.loads(message.body.decode())
-                        await handler(body)
+
+                try:
+                    body = json.loads(message.body.decode())
+                    await handler(body)
+                    # Only ack after successful processing
+                    await message.ack()
+                    logger.info(
+                        "Message processed successfully",
+                        routing_key=message.routing_key,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Error processing message",
+                        error=str(e),
+                        routing_key=message.routing_key,
+                        retry_count=retry_count,
+                    )
+
+                    if retry_count < self.MAX_RETRIES:
+                        # Calculate exponential backoff delay
+                        delay = calculate_retry_delay(retry_count)
+
+                        logger.warning(
+                            "Retrying message with exponential backoff",
+                            routing_key=message.routing_key,
+                            retry_count=retry_count,
+                            next_retry=retry_count + 1,
+                            max_retries=self.MAX_RETRIES,
+                            delay_seconds=round(delay, 2),
+                            error=str(e)[:200],  # Truncate for logging
+                        )
+
+                        # Wait before retrying to prevent retry storm
+                        await asyncio.sleep(delay)
+
+                        # Republish with incremented retry count
+                        new_headers = dict(headers)
+                        new_headers["x-retry-count"] = retry_count + 1
+                        new_headers["x-last-error"] = str(e)[:500]  # Truncate error
+                        new_headers["x-retry-delay"] = str(delay)
+
+                        retry_message = Message(
+                            body=message.body,
+                            content_type=message.content_type,
+                            correlation_id=message.correlation_id,
+                            headers=new_headers,
+                        )
+                        await self._exchange.publish(
+                            retry_message,
+                            routing_key=message.routing_key,
+                        )
+                        await message.ack()  # Ack original to avoid duplicate
+
                         logger.info(
-                            "Message processed successfully",
+                            "Message retry scheduled",
                             routing_key=message.routing_key,
+                            retry_count=retry_count + 1,
+                            delayed_by_seconds=round(delay, 2),
                         )
-                    except Exception as e:
+                    else:
+                        # Max retries exceeded - send to dead letter queue
+                        await message.reject(requeue=False)
                         logger.error(
-                            "Error processing message",
-                            error=str(e),
+                            "Message sent to dead letter queue after max retries",
                             routing_key=message.routing_key,
+                            retry_count=retry_count,
+                            dlq=dlq_name,
+                            final_error=str(e)[:200],
                         )
-                        # Message will be requeued on exception
 
 
 # Global broker instance

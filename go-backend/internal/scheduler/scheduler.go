@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/saltfish/freqsearch/go-backend/internal/config"
@@ -100,6 +101,12 @@ func (s *Scheduler) Start() error {
 		zap.Int("poll_interval_seconds", s.config.PollIntervalSeconds),
 	)
 
+	// Mark orphaned running jobs as failed on startup
+	if err := s.recoverOrphanedJobs(); err != nil {
+		s.logger.Error("Failed to recover orphaned jobs", zap.Error(err))
+		// Continue anyway - this is not fatal
+	}
+
 	// Start workers
 	for i := 0; i < s.config.MaxConcurrentBacktests; i++ {
 		worker := NewWorker(i, s, s.logger)
@@ -120,7 +127,26 @@ func (s *Scheduler) Start() error {
 	s.wg.Add(1)
 	go s.watchTimeouts()
 
+	// Start container health checker
+	s.wg.Add(1)
+	go s.watchContainerHealth()
+
 	s.logger.Info("Scheduler started")
+	return nil
+}
+
+// recoverOrphanedJobs marks all running jobs as failed on scheduler startup.
+// This handles the case where the scheduler was stopped while jobs were running.
+func (s *Scheduler) recoverOrphanedJobs() error {
+	ctx := context.Background()
+	// Mark all running jobs as failed with reason "scheduler_restart"
+	count, err := s.repos.BacktestJob.MarkRunningJobsFailed(ctx, "scheduler_restart")
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		s.logger.Info("Recovered orphaned jobs", zap.Int64("count", count))
+	}
 	return nil
 }
 
@@ -365,6 +391,93 @@ func (s *Scheduler) checkTimeouts(timeout time.Duration) {
 			s.eventPublisher.PublishTaskFailed(job, "job timed out")
 		}
 	}
+}
+
+// watchContainerHealth periodically checks if containers for active jobs are still running.
+// If a container crashed, the job is marked as failed immediately.
+func (s *Scheduler) watchContainerHealth() {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkContainerHealth()
+		}
+	}
+}
+
+// checkContainerHealth checks all active jobs for crashed containers.
+func (s *Scheduler) checkContainerHealth() {
+	s.activeJobs.Range(func(key, value interface{}) bool {
+		jobID, ok := key.(uuid.UUID)
+		if !ok {
+			return true
+		}
+
+		rj, ok := value.(*RunningJob)
+		if !ok || rj.ContainerID == "" {
+			return true
+		}
+
+		// Check if container is still running
+		isRunning, err := s.dockerManager.IsContainerRunning(s.ctx, rj.ContainerID)
+		if err != nil {
+			s.logger.Debug("Error checking container health",
+				zap.String("job_id", jobID.String()),
+				zap.String("container_id", rj.ContainerID),
+				zap.Error(err),
+			)
+			return true
+		}
+
+		if !isRunning {
+			// Container crashed - check if it was already processed
+			job, err := s.repos.BacktestJob.GetByID(s.ctx, jobID)
+			if err != nil {
+				s.logger.Error("Failed to get job for health check",
+					zap.String("job_id", jobID.String()),
+					zap.Error(err),
+				)
+				return true
+			}
+
+			// Only handle if still in running status
+			if job.Status == domain.JobStatusRunning {
+				s.logger.Warn("Container crashed, marking job as failed",
+					zap.String("job_id", jobID.String()),
+					zap.String("container_id", rj.ContainerID),
+				)
+
+				// Cancel the job context
+				if rj.Cancel != nil {
+					rj.Cancel()
+				}
+
+				// Mark as failed
+				if err := s.repos.BacktestJob.MarkFailed(s.ctx, jobID, "container crashed unexpectedly"); err != nil {
+					s.logger.Error("Failed to mark crashed job as failed",
+						zap.String("job_id", jobID.String()),
+						zap.Error(err),
+					)
+				}
+
+				// Remove from active jobs
+				s.activeJobs.Delete(jobID)
+
+				// Publish event
+				if s.eventPublisher != nil {
+					s.eventPublisher.PublishTaskFailed(job, "container crashed unexpectedly")
+				}
+			}
+		}
+
+		return true
+	})
 }
 
 // forceStopRunningJobs stops all running containers during shutdown.

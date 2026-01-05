@@ -195,8 +195,9 @@ func (m *dockerManager) RunBacktest(ctx context.Context, params *RunBacktestPara
 	containerID := resp.ID
 
 	if err := m.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		// Cleanup container
+		// Clean up the created container
 		m.client.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+		// Clean up temp files
 		strategyResult.Cleanup()
 		configResult.Cleanup()
 		return "", fmt.Errorf("failed to start container: %w", err)
@@ -534,8 +535,15 @@ func (m *dockerManager) GetContainerLogs(ctx context.Context, containerID string
 	_, err = stdcopy.StdCopy(&stdout, &stderr, reader)
 	if err != nil {
 		// Try reading directly if demux fails (for TTY containers)
-		reader, _ = m.client.ContainerLogs(ctx, containerID, options)
-		data, _ := io.ReadAll(reader)
+		reader2, err2 := m.client.ContainerLogs(ctx, containerID, options)
+		if err2 != nil {
+			return "", fmt.Errorf("failed to get container logs on retry: %w", err2)
+		}
+		defer reader2.Close()
+		data, err3 := io.ReadAll(reader2)
+		if err3 != nil {
+			return "", fmt.Errorf("failed to read container logs: %w", err3)
+		}
 		return string(data), nil
 	}
 

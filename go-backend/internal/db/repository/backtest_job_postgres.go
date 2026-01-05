@@ -314,7 +314,9 @@ func (r *backtestJobRepo) MarkFailed(ctx context.Context, id uuid.UUID, errMsg s
 			status = 'failed',
 			error_message = $2,
 			completed_at = NOW()
-		WHERE id = $1 AND status IN ('pending', 'running')
+		WHERE id = $1
+		AND status IN ('pending', 'running')
+		AND status != 'cancelled'
 	`
 
 	result, err := r.pool.Exec(ctx, query, id, errMsg)
@@ -619,4 +621,22 @@ func (r *backtestJobRepo) scanJobs(rows pgx.Rows) ([]*domain.BacktestJob, error)
 	}
 
 	return jobs, nil
+}
+
+// MarkRunningJobsFailed marks all running jobs as failed (used for recovery on restart).
+func (r *backtestJobRepo) MarkRunningJobsFailed(ctx context.Context, reason string) (int64, error) {
+	query := `
+		UPDATE backtest_jobs SET
+			status = 'failed',
+			error_message = $1,
+			completed_at = NOW()
+		WHERE status = 'running'
+	`
+
+	result, err := r.pool.Exec(ctx, query, reason)
+	if err != nil {
+		return 0, fmt.Errorf("failed to mark running jobs as failed: %w", err)
+	}
+
+	return result.RowsAffected(), nil
 }
