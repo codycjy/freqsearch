@@ -431,16 +431,24 @@ func (r *optimizationRepo) AddIteration(ctx context.Context, iteration *domain.O
 	return nil
 }
 
-// GetIterations retrieves all iterations for an optimization run.
+// GetIterations retrieves all iterations for an optimization run with their backtest results.
 func (r *optimizationRepo) GetIterations(ctx context.Context, runID uuid.UUID) ([]*domain.OptimizationIteration, error) {
 	query := `
 		SELECT
-			id, optimization_run_id, iteration_number, strategy_id,
-			backtest_job_id, result_id, engineer_changes, analyst_feedback,
-			approval, created_at
-		FROM optimization_iterations
-		WHERE optimization_run_id = $1
-		ORDER BY iteration_number ASC
+			oi.id, oi.optimization_run_id, oi.iteration_number, oi.strategy_id,
+			oi.backtest_job_id, oi.result_id, oi.engineer_changes, oi.analyst_feedback,
+			oi.approval, oi.created_at,
+			-- Backtest result fields (nullable due to LEFT JOIN)
+			br.id, br.job_id, br.strategy_id,
+			br.total_trades, br.winning_trades, br.losing_trades, br.win_rate,
+			br.profit_total, br.profit_pct, br.profit_factor,
+			br.max_drawdown, br.max_drawdown_pct, br.sharpe_ratio, br.sortino_ratio, br.calmar_ratio,
+			br.avg_trade_duration_minutes, br.avg_profit_per_trade, br.best_trade_pct, br.worst_trade_pct,
+			br.created_at
+		FROM optimization_iterations oi
+		LEFT JOIN backtest_results br ON br.job_id = oi.backtest_job_id
+		WHERE oi.optimization_run_id = $1
+		ORDER BY oi.iteration_number ASC
 	`
 
 	rows, err := r.pool.Query(ctx, query, runID)
@@ -455,6 +463,14 @@ func (r *optimizationRepo) GetIterations(ctx context.Context, runID uuid.UUID) (
 		var engineerChanges, analystFeedback *string
 		var approvalStr string
 
+		// Backtest result fields (all nullable)
+		var brID, brJobID, brStrategyID *uuid.UUID
+		var brTotalTrades, brWinningTrades, brLosingTrades *int
+		var brWinRate, brProfitTotal, brProfitPct, brMaxDrawdown, brMaxDrawdownPct *float64
+		var brProfitFactor, brSharpeRatio, brSortinoRatio, brCalmarRatio *float64
+		var brAvgTradeDuration, brAvgProfitPerTrade, brBestTradePct, brWorstTradePct *float64
+		var brCreatedAt *time.Time
+
 		err := rows.Scan(
 			&iter.ID,
 			&iter.OptimizationRunID,
@@ -466,6 +482,13 @@ func (r *optimizationRepo) GetIterations(ctx context.Context, runID uuid.UUID) (
 			&analystFeedback,
 			&approvalStr,
 			&iter.CreatedAt,
+			// Backtest result fields
+			&brID, &brJobID, &brStrategyID,
+			&brTotalTrades, &brWinningTrades, &brLosingTrades, &brWinRate,
+			&brProfitTotal, &brProfitPct, &brProfitFactor,
+			&brMaxDrawdown, &brMaxDrawdownPct, &brSharpeRatio, &brSortinoRatio, &brCalmarRatio,
+			&brAvgTradeDuration, &brAvgProfitPerTrade, &brBestTradePct, &brWorstTradePct,
+			&brCreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan iteration row: %w", err)
@@ -478,6 +501,32 @@ func (r *optimizationRepo) GetIterations(ctx context.Context, runID uuid.UUID) (
 			iter.AnalystFeedback = *analystFeedback
 		}
 		iter.Approval = domain.ApprovalStatusFromString(approvalStr)
+
+		// Populate backtest result if exists
+		if brID != nil {
+			iter.Result = &domain.BacktestResult{
+				ID:                      *brID,
+				JobID:                   *brJobID,
+				StrategyID:              *brStrategyID,
+				TotalTrades:             *brTotalTrades,
+				WinningTrades:           *brWinningTrades,
+				LosingTrades:            *brLosingTrades,
+				WinRate:                 *brWinRate,
+				ProfitTotal:             *brProfitTotal,
+				ProfitPct:               *brProfitPct,
+				ProfitFactor:            brProfitFactor,
+				MaxDrawdown:             *brMaxDrawdown,
+				MaxDrawdownPct:          *brMaxDrawdownPct,
+				SharpeRatio:             brSharpeRatio,
+				SortinoRatio:            brSortinoRatio,
+				CalmarRatio:             brCalmarRatio,
+				AvgTradeDurationMinutes: brAvgTradeDuration,
+				AvgProfitPerTrade:       brAvgProfitPerTrade,
+				BestTradePct:            brBestTradePct,
+				WorstTradePct:           brWorstTradePct,
+				CreatedAt:               *brCreatedAt,
+			}
+		}
 
 		iterations = append(iterations, iter)
 	}

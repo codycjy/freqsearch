@@ -245,9 +245,9 @@ export const BacktestCreate: React.FC = () => {
                 filterOption={(input, option) =>
                   (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                 }
-                options={strategies.map((item) => ({
-                  label: `${item.strategy.name} (${item.strategy.id.slice(0, 8)})`,
-                  value: item.strategy.id,
+                options={strategies.map((item: any) => ({
+                  label: `${item.name} (${item.id.slice(0, 8)})`,
+                  value: item.id,
                 }))}
               />
             </Form.Item>

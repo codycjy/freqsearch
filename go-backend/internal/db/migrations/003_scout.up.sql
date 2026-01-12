@@ -7,20 +7,28 @@
 -- =====================================================
 
 -- Scout run status
-CREATE TYPE scout_run_status AS ENUM (
-    'pending',
-    'running',
-    'completed',
-    'failed',
-    'cancelled'
-);
+DO $$ BEGIN
+    CREATE TYPE scout_run_status AS ENUM (
+        'pending',
+        'running',
+        'completed',
+        'failed',
+        'cancelled'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- Scout trigger type
-CREATE TYPE scout_trigger_type AS ENUM (
-    'manual',
-    'scheduled',
-    'event'
-);
+DO $$ BEGIN
+    CREATE TYPE scout_trigger_type AS ENUM (
+        'manual',
+        'scheduled',
+        'event'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- =====================================================
 -- SCOUT RUNS TABLE
@@ -99,9 +107,9 @@ CREATE INDEX idx_scout_schedules_next_run ON scout_schedules(next_run_at)
 CREATE INDEX idx_scout_schedules_source ON scout_schedules(source);
 CREATE INDEX idx_scout_schedules_created_at ON scout_schedules(created_at DESC);
 
--- Partial index for active schedules due to run
-CREATE INDEX idx_scout_schedules_due ON scout_schedules(next_run_at)
-    WHERE enabled = true AND next_run_at <= NOW();
+-- Note: We don't create a partial index for "due" schedules because NOW() is not IMMUTABLE.
+-- Instead, queries should filter: WHERE enabled = true AND next_run_at <= NOW()
+-- The idx_scout_schedules_next_run index will be used for these queries.
 
 COMMENT ON TABLE scout_schedules IS 'Cron schedules for automatic Scout agent execution';
 COMMENT ON COLUMN scout_schedules.name IS 'Unique schedule name';

@@ -6,7 +6,7 @@ from typing import Any
 import structlog
 
 from ...core.state import AnalystState
-from ...core.llm import get_llm
+from ...core.llm import get_llm_for_agent
 from ...core.messaging import publish_event, Events
 from ...schemas.diagnosis import (
     DiagnosisReport,
@@ -232,7 +232,7 @@ async def generate_diagnosis_node(
         issues.append("Negative total profit")
 
     # Use LLM for detailed analysis
-    llm = get_llm()
+    llm = get_llm_for_agent("analyst")
     prompt = get_analysis_prompt(
         strategy_name=result.get("strategy_name", "unknown"),
         metrics=metrics,

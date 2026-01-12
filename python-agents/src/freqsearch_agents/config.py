@@ -7,8 +7,33 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class LLMModelSettings(BaseSettings):
+    """Per-agent LLM model configuration."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    # API keys
+    openai_api_key: str = Field("", alias="OPENAI_API_KEY")
+    openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")
+
+    # Default model (fallback)
+    default_model: str = Field("google/gemini-3-pro-preview", alias="LLM_DEFAULT_MODEL")
+
+    # Per-agent model configuration
+    scout_model: str = Field("google/gemini-3-flash-preview", alias="LLM_SCOUT_MODEL")
+    engineer_model: str = Field("google/gemini-3-pro-preview", alias="LLM_ENGINEER_MODEL")
+    analyst_model: str = Field("google/gemini-3-pro-preview", alias="LLM_ANALYST_MODEL")
+
+    # Model parameters
+    temperature: float = Field(0.1, alias="LLM_TEMPERATURE")
+    max_tokens: int = Field(4096, alias="LLM_MAX_TOKENS")
+
+    # Embedding model (OpenAI)
+    embedding_model: str = Field("text-embedding-3-small", alias="OPENAI_EMBEDDING_MODEL")
+
+
 class OpenAISettings(BaseSettings):
-    """OpenAI API configuration."""
+    """OpenAI API configuration (legacy, for embeddings)."""
 
     api_key: str = Field(..., alias="OPENAI_API_KEY")
     model: str = Field("gpt-4-turbo-preview", alias="OPENAI_MODEL")
@@ -86,6 +111,7 @@ class Settings(BaseSettings):
     )
 
     # Sub-settings
+    llm: LLMModelSettings = Field(default_factory=LLMModelSettings)
     openai: OpenAISettings = Field(default_factory=OpenAISettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     rabbitmq: RabbitMQSettings = Field(default_factory=RabbitMQSettings)

@@ -121,6 +121,7 @@ type OptimizationIteration struct {
 	StrategyID        uuid.UUID      `json:"strategy_id"`
 	BacktestJobID     uuid.UUID      `json:"backtest_job_id"`
 	ResultID          *uuid.UUID     `json:"result_id,omitempty"`
+	Result            *BacktestResult `json:"result,omitempty"` // Populated when fetching iterations with results
 	EngineerChanges   string         `json:"engineer_changes,omitempty"`
 	AnalystFeedback   string         `json:"analyst_feedback,omitempty"`
 	Approval          ApprovalStatus `json:"approval"`

@@ -5,7 +5,7 @@ from typing import Any
 import structlog
 
 from ...core.state import EngineerState
-from ...core.llm import get_llm
+from ...core.llm import get_llm_for_agent
 from ...core.messaging import publish_event, Events
 from ...tools.code.parser import FreqtradeCodeParser
 from ...tools.code.simhash import compute_code_hash
@@ -237,8 +237,8 @@ async def generate_code_node(
             rag_context=state["rag_context"],
         )
 
-    # Get LLM
-    llm = get_llm()
+    # Get LLM for engineer agent
+    llm = get_llm_for_agent("engineer")
 
     # Generate code
     system_prompt = get_system_prompt()
@@ -400,7 +400,7 @@ async def generate_hyperopt_node(
 
     # Get LLM to suggest additional parameters from hardcoded values
     if result.hardcoded_values and not existing_params:
-        llm = get_llm()
+        llm = get_llm_for_agent("engineer")
         prompt = get_hyperopt_prompt(code, result.hardcoded_values)
 
         messages = [
@@ -479,7 +479,7 @@ async def generate_metadata_node(
     )
 
     # Get LLM for metadata generation
-    llm = get_llm()
+    llm = get_llm_for_agent("engineer")
     prompt = get_metadata_generation_prompt(code, indicators, timeframe, stoploss)
 
     messages = [

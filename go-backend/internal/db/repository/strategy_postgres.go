@@ -137,26 +137,31 @@ func (r *strategyRepo) Update(ctx context.Context, strategy *domain.Strategy) er
 
 	query := `
 		UPDATE strategies SET
-			name = $2, description = $3,
-			timeframe = $4, stoploss = $5, trailing_stop = $6,
-			trailing_stop_positive = $7, trailing_stop_positive_offset = $8,
-			startup_candle_count = $9, indicators = $10, minimal_roi = $11
+			name = $2, code = $3, description = $4,
+			timeframe = $5, stoploss = $6, trailing_stop = $7,
+			trailing_stop_positive = $8, trailing_stop_positive_offset = $9,
+			startup_candle_count = $10, indicators = $11, minimal_roi = $12,
+			updated_at = $13
 		WHERE id = $1
+		RETURNING code_hash
 	`
 
-	result, err := r.pool.Exec(ctx, query,
-		strategy.ID, strategy.Name, strategy.Description,
+	err := r.pool.QueryRow(ctx, query,
+		strategy.ID, strategy.Name, strategy.Code, strategy.Description,
 		strategy.Timeframe, strategy.Stoploss, strategy.TrailingStop,
 		strategy.TrailingStopPositive, strategy.TrailingStopPositiveOffset,
 		strategy.StartupCandleCount, indicators, minimalROI,
-	)
+		strategy.UpdatedAt,
+	).Scan(&strategy.CodeHash)
 
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			return domain.NewNotFoundError("strategy", strategy.ID.String())
+		}
+		if isDuplicateKeyError(err) {
+			return domain.NewDuplicateError("strategy", "code_hash", "")
+		}
 		return fmt.Errorf("failed to update strategy: %w", err)
-	}
-
-	if result.RowsAffected() == 0 {
-		return domain.NewNotFoundError("strategy", strategy.ID.String())
 	}
 
 	return nil
