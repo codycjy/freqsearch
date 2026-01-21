@@ -327,6 +327,80 @@ func (s *Server) setupAPIRoutes(mux *http.ServeMux) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+
+	// Factor endpoints
+	mux.HandleFunc("/api/v1/factors", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			s.handler.HandleListFactors(w, r)
+		case http.MethodPost:
+			s.handler.HandleCreateFactor(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// Factor search endpoint - must be before /factors/ to avoid path collision
+	mux.HandleFunc("/api/v1/factors/search", func(w http.ResponseWriter, r *http.Request) {
+		s.handler.HandleSearchFactors(w, r)
+	})
+
+	// Factor categories stats endpoint
+	mux.HandleFunc("/api/v1/factors/categories", func(w http.ResponseWriter, r *http.Request) {
+		s.handler.HandleGetCategoryStats(w, r)
+	})
+
+	// Factor by name endpoint
+	mux.HandleFunc("/api/v1/factors/name/", func(w http.ResponseWriter, r *http.Request) {
+		s.handler.HandleGetFactorByName(w, r)
+	})
+
+	mux.HandleFunc("/api/v1/factors/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Check for /search suffix (already handled above, but keep for safety)
+		if strings.HasSuffix(path, "/search") {
+			s.handler.HandleSearchFactors(w, r)
+			return
+		}
+
+		// Check for /categories suffix (already handled above, but keep for safety)
+		if strings.HasSuffix(path, "/categories") {
+			s.handler.HandleGetCategoryStats(w, r)
+			return
+		}
+
+		// Check for /name/ prefix (already handled above, but keep for safety)
+		if strings.Contains(path, "/name/") {
+			s.handler.HandleGetFactorByName(w, r)
+			return
+		}
+
+		// Check if it's a specific ID
+		if strings.TrimPrefix(path, "/api/v1/factors/") != "" {
+			switch r.Method {
+			case http.MethodGet:
+				s.handler.HandleGetFactor(w, r)
+			case http.MethodPut:
+				s.handler.HandleUpdateFactor(w, r)
+			case http.MethodDelete:
+				s.handler.HandleDeleteFactor(w, r)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+			return
+		}
+
+		// Collection endpoint
+		switch r.Method {
+		case http.MethodGet:
+			s.handler.HandleListFactors(w, r)
+		case http.MethodPost:
+			s.handler.HandleCreateFactor(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
 }
 
 // setupFrontendRoutes configures routes for serving the embedded frontend.

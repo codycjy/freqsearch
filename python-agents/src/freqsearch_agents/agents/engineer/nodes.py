@@ -4,19 +4,24 @@ from typing import Any
 
 import structlog
 
-from ...core.state import EngineerState
 from ...core.llm import get_llm_for_agent
-from ...core.messaging import publish_event, Events
+from ...core.messaging import Events, publish_event
+from ...core.state import EngineerState
+from ...factors.tools import (
+    get_factor_code,
+    list_factor_categories,
+    search_factors,
+)
 from ...tools.code.parser import FreqtradeCodeParser
 from ...tools.code.simhash import compute_code_hash
 from .prompts import (
-    get_system_prompt,
-    get_code_generation_prompt,
-    get_code_fix_prompt,
+    METADATA_SYSTEM_PROMPT,
     get_code_evolution_prompt,
+    get_code_fix_prompt,
+    get_code_generation_prompt,
     get_hyperopt_prompt,
     get_metadata_generation_prompt,
-    METADATA_SYSTEM_PROMPT,
+    get_system_prompt,
 )
 
 logger = structlog.get_logger(__name__)
@@ -240,16 +245,90 @@ async def generate_code_node(
     # Get LLM for engineer agent
     llm = get_llm_for_agent("engineer")
 
-    # Generate code
+    # Bind factor tools to LLM
+    tools = [search_factors, get_factor_code, list_factor_categories]
+    llm_with_tools = llm.bind_tools(tools)
+
+    # Build message history with system prompt
     system_prompt = get_system_prompt()
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt},
     ]
 
-    response = await llm.ainvoke(messages)
+    # Handle tool calls in a loop (max 5 iterations to prevent infinite loops)
+    max_tool_iterations = 5
+    for iteration in range(max_tool_iterations):
+        response = await llm_with_tools.ainvoke(messages)
 
-    # Extract code from response
+        # Check if LLM wants to call tools
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            logger.info(
+                "LLM requesting tool calls",
+                num_tools=len(response.tool_calls),
+                iteration=iteration,
+            )
+
+            # Add assistant message to history
+            messages.append(response)
+
+            # Execute tool calls
+            for tool_call in response.tool_calls:
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
+
+                logger.debug(
+                    "Executing tool",
+                    tool=tool_name,
+                    args=tool_args,
+                )
+
+                # Find and execute the tool
+                tool_map = {
+                    "search_factors": search_factors,
+                    "get_factor_code": get_factor_code,
+                    "list_factor_categories": list_factor_categories,
+                }
+
+                if tool_name in tool_map:
+                    try:
+                        tool_result = tool_map[tool_name].invoke(tool_args)
+                        logger.debug(
+                            "Tool execution successful",
+                            tool=tool_name,
+                            result_length=len(str(tool_result)),
+                        )
+                    except Exception as e:
+                        tool_result = f"Error executing {tool_name}: {str(e)}"
+                        logger.error(
+                            "Tool execution failed",
+                            tool=tool_name,
+                            error=str(e),
+                        )
+                else:
+                    tool_result = f"Unknown tool: {tool_name}"
+                    logger.warning("Unknown tool requested", tool=tool_name)
+
+                # Add tool result to message history
+                messages.append({
+                    "role": "tool",
+                    "content": str(tool_result),
+                    "tool_call_id": tool_call.get("id", ""),
+                })
+
+            # Continue loop to get next LLM response
+            continue
+
+        # No more tool calls - extract final code
+        break
+    else:
+        # Max iterations reached
+        logger.warning(
+            "Max tool iterations reached",
+            iterations=max_tool_iterations,
+        )
+
+    # Extract code from final response
     generated_code = _extract_code_from_response(response.content)
 
     return {
