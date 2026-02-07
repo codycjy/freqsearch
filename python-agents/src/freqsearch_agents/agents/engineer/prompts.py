@@ -112,7 +112,7 @@ class MyStrategy(IStrategy):
 ```python
 # CORRECT - use bitwise operators with parentheses:
 condition = (
-    (dataframe['rsi'] < 30) &
+    (dataframe['rsi'] < 40) &
     (dataframe['ema_fast'] > dataframe['ema_slow']) &
     (dataframe['volume'] > 0)
 )
@@ -122,6 +122,50 @@ dataframe.loc[condition, 'enter_long'] = 1
 # dataframe.loc[rsi < 30, 'enter_long'] = 1  # Missing dataframe reference
 # dataframe.loc[dataframe['rsi'] < 30 and dataframe['volume'] > 0, ...]  # 'and' doesn't work
 ```
+
+### 6. CRITICAL: ENTRY CONDITION LOGIC (must generate trades):
+Your strategy MUST produce trades. Avoid these common mistakes:
+
+**BAD - Contradictory conditions (will produce 0 trades):**
+```python
+# WRONG: RSI < 30 (oversold/falling) + EMA crossover up (rising) rarely happen together!
+condition = (
+    (dataframe['rsi'] < 30) &  # Oversold = price falling
+    crossed_above &             # Crossover = price just started rising
+    # These almost NEVER happen at the same time!
+)
+```
+
+**GOOD - Logically consistent conditions:**
+```python
+# Option 1: Trend-following (conditions that occur together)
+condition = (
+    (dataframe['rsi'] > 50) &                    # Bullish momentum
+    (dataframe['ema_fast'] > dataframe['ema_slow']) &  # Uptrend confirmed
+    (dataframe['adx'] > 20) &                    # Trend strength
+    (dataframe['volume'] > 0)
+)
+
+# Option 2: Mean-reversion with relaxed thresholds
+condition = (
+    (dataframe['rsi'] < 40) &                    # Slightly oversold (not extreme)
+    (dataframe['close'] > dataframe['ema_slow']) &  # Still above support
+    (dataframe['volume'] > 0)
+)
+
+# Option 3: Momentum with EMA filter
+condition = (
+    (dataframe['macd'] > dataframe['macdsignal']) &  # MACD bullish
+    (dataframe['ema_fast'] > dataframe['ema_slow']) &  # Trend confirmed
+    (dataframe['volume'] > 0)
+)
+```
+
+**RULES for conditions that will generate trades:**
+1. Use RSI thresholds of 35-45 for oversold (not 30), 55-65 for overbought (not 70)
+2. Don't combine "falling price" indicators (RSI<30) with "rising price" indicators (EMA crossover up)
+3. Limit to 2-3 conditions maximum - more conditions = fewer trades
+4. Test that conditions can realistically occur together
 
 ## OUTPUT FORMAT:
 - Output ONLY raw Python code, no markdown
@@ -213,7 +257,12 @@ Description: {suggestion_description}
 Apply the suggested modification while:
 1. Keeping the existing trading logic that works well
 2. Making minimal changes to achieve the goal
-3. Ensuring code remains valid and complete"""
+3. Ensuring code remains valid and complete
+4. CRITICAL: If the issue is "zero trades" or "too few trades", you MUST:
+   - Relax RSI thresholds (use 35-45 for oversold, not 30)
+   - Remove contradictory conditions (e.g., RSI<30 + EMA crossover up rarely happen together)
+   - Use fewer AND conditions (2-3 max)
+   - Ensure conditions can realistically occur together"""
 
     if previous_errors:
         error_list = "\n".join(f"- {e}" for e in previous_errors)

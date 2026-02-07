@@ -29,21 +29,21 @@ func (r *strategyRepo) Create(ctx context.Context, strategy *domain.Strategy) er
 
 	query := `
 		INSERT INTO strategies (
-			id, name, code, parent_id, description,
+			id, name, code, simhash, parent_id, description,
 			timeframe, stoploss, trailing_stop, trailing_stop_positive,
 			trailing_stop_positive_offset, startup_candle_count,
 			indicators, minimal_roi, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9,
-			$10, $11,
-			$12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6,
+			$7, $8, $9, $10,
+			$11, $12,
+			$13, $14, $15, $16
 		)
 		RETURNING code_hash, generation
 	`
 
 	err := r.pool.QueryRow(ctx, query,
-		strategy.ID, strategy.Name, strategy.Code, strategy.ParentID, strategy.Description,
+		strategy.ID, strategy.Name, strategy.Code, strategy.SimHash, strategy.ParentID, strategy.Description,
 		strategy.Timeframe, strategy.Stoploss, strategy.TrailingStop, strategy.TrailingStopPositive,
 		strategy.TrailingStopPositiveOffset, strategy.StartupCandleCount,
 		indicators, minimalROI, strategy.CreatedAt, strategy.UpdatedAt,
@@ -62,7 +62,7 @@ func (r *strategyRepo) Create(ctx context.Context, strategy *domain.Strategy) er
 func (r *strategyRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Strategy, error) {
 	query := `
 		SELECT
-			id, name, code, code_hash, parent_id, generation, description,
+			id, name, code, code_hash, simhash, parent_id, generation, description,
 			timeframe, stoploss, trailing_stop, trailing_stop_positive,
 			trailing_stop_positive_offset, startup_candle_count,
 			indicators, minimal_roi, created_at, updated_at
@@ -74,7 +74,7 @@ func (r *strategyRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Strat
 	var indicators, minimalROI []byte
 
 	err := r.pool.QueryRow(ctx, query, id).Scan(
-		&strategy.ID, &strategy.Name, &strategy.Code, &strategy.CodeHash,
+		&strategy.ID, &strategy.Name, &strategy.Code, &strategy.CodeHash, &strategy.SimHash,
 		&strategy.ParentID, &strategy.Generation, &strategy.Description,
 		&strategy.Timeframe, &strategy.Stoploss, &strategy.TrailingStop,
 		&strategy.TrailingStopPositive, &strategy.TrailingStopPositiveOffset,
@@ -98,7 +98,7 @@ func (r *strategyRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Strat
 func (r *strategyRepo) GetByCodeHash(ctx context.Context, hash string) (*domain.Strategy, error) {
 	query := `
 		SELECT
-			id, name, code, code_hash, parent_id, generation, description,
+			id, name, code, code_hash, simhash, parent_id, generation, description,
 			timeframe, stoploss, trailing_stop, trailing_stop_positive,
 			trailing_stop_positive_offset, startup_candle_count,
 			indicators, minimal_roi, created_at, updated_at
@@ -110,7 +110,7 @@ func (r *strategyRepo) GetByCodeHash(ctx context.Context, hash string) (*domain.
 	var indicators, minimalROI []byte
 
 	err := r.pool.QueryRow(ctx, query, hash).Scan(
-		&strategy.ID, &strategy.Name, &strategy.Code, &strategy.CodeHash,
+		&strategy.ID, &strategy.Name, &strategy.Code, &strategy.CodeHash, &strategy.SimHash,
 		&strategy.ParentID, &strategy.Generation, &strategy.Description,
 		&strategy.Timeframe, &strategy.Stoploss, &strategy.TrailingStop,
 		&strategy.TrailingStopPositive, &strategy.TrailingStopPositiveOffset,
@@ -137,17 +137,17 @@ func (r *strategyRepo) Update(ctx context.Context, strategy *domain.Strategy) er
 
 	query := `
 		UPDATE strategies SET
-			name = $2, code = $3, description = $4,
-			timeframe = $5, stoploss = $6, trailing_stop = $7,
-			trailing_stop_positive = $8, trailing_stop_positive_offset = $9,
-			startup_candle_count = $10, indicators = $11, minimal_roi = $12,
-			updated_at = $13
+			name = $2, code = $3, description = $4, simhash = $5,
+			timeframe = $6, stoploss = $7, trailing_stop = $8,
+			trailing_stop_positive = $9, trailing_stop_positive_offset = $10,
+			startup_candle_count = $11, indicators = $12, minimal_roi = $13,
+			updated_at = $14
 		WHERE id = $1
 		RETURNING code_hash
 	`
 
 	err := r.pool.QueryRow(ctx, query,
-		strategy.ID, strategy.Name, strategy.Code, strategy.Description,
+		strategy.ID, strategy.Name, strategy.Code, strategy.Description, strategy.SimHash,
 		strategy.Timeframe, strategy.Stoploss, strategy.TrailingStop,
 		strategy.TrailingStopPositive, strategy.TrailingStopPositiveOffset,
 		strategy.StartupCandleCount, indicators, minimalROI,
@@ -437,7 +437,7 @@ func (r *strategyRepo) GetDescendants(ctx context.Context, strategyID uuid.UUID)
 			INNER JOIN descendants d ON s.parent_id = d.id
 		)
 		SELECT
-			s.id, s.name, s.code, s.code_hash, s.parent_id, s.generation, s.description,
+			s.id, s.name, s.code, s.code_hash, s.simhash, s.parent_id, s.generation, s.description,
 			s.timeframe, s.stoploss, s.trailing_stop, s.trailing_stop_positive,
 			s.trailing_stop_positive_offset, s.startup_candle_count,
 			s.indicators, s.minimal_roi, s.created_at, s.updated_at
@@ -459,7 +459,7 @@ func (r *strategyRepo) GetAncestors(ctx context.Context, strategyID uuid.UUID) (
 			WHERE s.parent_id IS NOT NULL
 		)
 		SELECT
-			s.id, s.name, s.code, s.code_hash, s.parent_id, s.generation, s.description,
+			s.id, s.name, s.code, s.code_hash, s.simhash, s.parent_id, s.generation, s.description,
 			s.timeframe, s.stoploss, s.trailing_stop, s.trailing_stop_positive,
 			s.trailing_stop_positive_offset, s.startup_candle_count,
 			s.indicators, s.minimal_roi, s.created_at, s.updated_at
@@ -484,7 +484,7 @@ func (r *strategyRepo) queryStrategies(ctx context.Context, query string, args .
 		var indicators, minimalROI []byte
 
 		err := rows.Scan(
-			&strategy.ID, &strategy.Name, &strategy.Code, &strategy.CodeHash,
+			&strategy.ID, &strategy.Name, &strategy.Code, &strategy.CodeHash, &strategy.SimHash,
 			&strategy.ParentID, &strategy.Generation, &strategy.Description,
 			&strategy.Timeframe, &strategy.Stoploss, &strategy.TrailingStop,
 			&strategy.TrailingStopPositive, &strategy.TrailingStopPositiveOffset,
@@ -502,6 +502,37 @@ func (r *strategyRepo) queryStrategies(ctx context.Context, query string, args .
 	}
 
 	return strategies, nil
+}
+
+func (r *strategyRepo) GetStrategyHashes(ctx context.Context, limit int) ([]domain.StrategyHash, error) {
+	query := `
+		SELECT id, code_hash, simhash
+		FROM strategies
+		ORDER BY created_at DESC
+	`
+
+	// Add limit if specified
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := r.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get strategy hashes: %w", err)
+	}
+	defer rows.Close()
+
+	var hashes []domain.StrategyHash
+	for rows.Next() {
+		var hash domain.StrategyHash
+		err := rows.Scan(&hash.ID, &hash.CodeHash, &hash.SimHash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan strategy hash: %w", err)
+		}
+		hashes = append(hashes, hash)
+	}
+
+	return hashes, nil
 }
 
 // Helper functions for error checking

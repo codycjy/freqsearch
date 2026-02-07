@@ -54,19 +54,19 @@ class OrchestratorRunner:
         max_iterations: int = 10,
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run optimization with external iteration loop.
+        """Run optimization - Baseline + Improve workflow.
 
         Args:
             run_id: Optimization run ID
             base_strategy_id: Base strategy to optimize
-            max_iterations: Maximum iterations allowed
+            max_iterations: Maximum improvement iterations (not including baseline)
             config: Optional configuration (backtest settings, etc.)
 
         Returns:
             Final optimization result
         """
         logger.info(
-            "Starting optimization with external runner",
+            "Starting optimization with Baseline + Improve workflow",
             run_id=run_id,
             base_strategy_id=base_strategy_id,
             max_iterations=max_iterations,
@@ -88,130 +88,153 @@ class OrchestratorRunner:
             # Set to running
             await client.control_optimization(run_id, "resume")
 
-            # Main iteration loop
-            while context.has_iterations_remaining():
-                # Reload context to check for external cancellation/pause
-                context = await OptimizationContext.load(client, run_id)
-                if context.status in ("cancelled", "paused", "completed", "failed"):
-                    logger.info(
-                        "Optimization stopped externally",
-                        status=context.status,
-                        run_id=run_id,
-                        iteration=context.current_iteration,
-                    )
-                    break
+            # ========== Phase 1: Baseline ==========
+            if not context.baseline_completed:
+                logger.info("Running baseline iteration", run_id=run_id)
 
-                logger.info(
-                    "Starting iteration",
-                    run_id=run_id,
-                    iteration=context.current_iteration,
-                    max_iterations=max_iterations,
-                )
-
-                # Publish iteration started event
                 await publish_event(
                     Events.OPTIMIZATION_ITERATION_STARTED,
                     {
                         "optimization_run_id": run_id,
-                        "iteration": context.current_iteration,
-                        "max_iterations": max_iterations,
+                        "iteration": 0,
+                        "mode": "baseline",
                     },
                 )
 
                 try:
-                    # Create fresh graph for this iteration
                     graph = create_single_iteration_graph()
-
-                    # Prepare state from context
                     iteration_state = context.to_iteration_state()
 
-                    # Run single iteration
                     result = await graph.ainvoke(
                         iteration_state,
-                        config={"configurable": {"thread_id": f"{run_id}-iter-{context.current_iteration}"}},
+                        config={"configurable": {"thread_id": f"{run_id}-baseline"}},
                     )
 
-                    # Persist results
                     await context.save_iteration_result(client, result)
 
-                    # Publish iteration completed event
                     await publish_event(
                         Events.OPTIMIZATION_ITERATION_COMPLETED,
                         {
                             "optimization_run_id": run_id,
-                            "iteration": context.current_iteration - 1,  # Already incremented
-                            "decision": result.get("analyst_decision"),
-                            "sharpe_ratio": result.get("new_best_sharpe"),
-                            "is_best": result.get("is_new_best", False),
+                            "iteration": 0,
+                            "mode": "baseline",
+                            "backtest_result": result.get("backtest_result"),
                         },
                     )
 
-                    # Check if should terminate
+                    if result.get("should_terminate"):
+                        return self._build_result(context, result.get("termination_reason"))
+
+                    # Note: We don't reload context here because save_iteration_result
+                    # already updated the local context with baseline data.
+                    # Reloading from DB might fail if backend hasn't stored iterations yet.
+                    logger.info(
+                        "Baseline completed, context updated",
+                        baseline_result_sharpe=context.baseline_result.get("sharpe_ratio") if context.baseline_result else None,
+                        baseline_strategy_id=context.baseline_strategy_id,
+                    )
+
+                except Exception as e:
+                    logger.exception("Baseline iteration failed", error=str(e))
+                    try:
+                        await client.control_optimization(run_id, "fail", termination_reason=str(e))
+                    except Exception:
+                        pass
+                    return self._build_result(context, "exception", error=str(e))
+
+            # ========== Phase 2: Improve Iterations ==========
+            # max_iterations is for improve iterations (not including baseline)
+            # current_iteration starts from 1 (after baseline)
+            # Preserve baseline data in case reload fails to get it from backend
+            baseline_result_cache = context.baseline_result
+            baseline_strategy_id_cache = context.baseline_strategy_id
+
+            while context.current_iteration <= max_iterations:
+                # Check external control (reload to check status)
+                old_baseline_result = context.baseline_result
+                context = await OptimizationContext.load(client, run_id)
+                if context.status in ("cancelled", "paused", "completed", "failed"):
+                    break
+
+                # Restore baseline data if reload lost it
+                if not context.baseline_result and baseline_result_cache:
+                    logger.warning(
+                        "Baseline data lost after reload, restoring from cache",
+                        run_id=run_id,
+                    )
+                    context.baseline_result = baseline_result_cache
+                    context.baseline_strategy_id = baseline_strategy_id_cache
+                    context.baseline_completed = True
+                    context.previous_backtest_result = old_baseline_result or baseline_result_cache
+
+                iteration = context.current_iteration
+                logger.info(
+                    "Starting improve iteration",
+                    run_id=run_id,
+                    iteration=iteration,
+                    max_iterations=max_iterations,
+                )
+
+                await publish_event(
+                    Events.OPTIMIZATION_ITERATION_STARTED,
+                    {
+                        "optimization_run_id": run_id,
+                        "iteration": iteration,
+                        "mode": "improve",
+                    },
+                )
+
+                try:
+                    graph = create_single_iteration_graph()
+                    iteration_state = context.to_iteration_state()
+
+                    result = await graph.ainvoke(
+                        iteration_state,
+                        config={"configurable": {"thread_id": f"{run_id}-iter-{iteration}"}},
+                    )
+
+                    await context.save_iteration_result(client, result)
+
+                    await publish_event(
+                        Events.OPTIMIZATION_ITERATION_COMPLETED,
+                        {
+                            "optimization_run_id": run_id,
+                            "iteration": iteration,
+                            "mode": "improve",
+                            "decision": result.get("analyst_decision"),
+                            "improvement_vs_baseline": result.get("improvement_vs_baseline"),
+                            "is_new_best": result.get("is_new_best", False),
+                        },
+                    )
+
                     if result.get("should_terminate"):
                         logger.info(
                             "Optimization terminating",
                             run_id=run_id,
                             reason=result.get("termination_reason"),
-                            iterations=context.current_iteration,
+                            iterations=iteration,
                         )
                         return self._build_result(context, result.get("termination_reason"))
 
-                    # Reload context for next iteration (gets updated code, etc.)
+                    # Reload context
                     context = await OptimizationContext.load(client, run_id)
 
                 except Exception as e:
                     logger.exception(
-                        "Iteration failed with exception",
+                        "Iteration failed",
                         run_id=run_id,
-                        iteration=context.current_iteration,
+                        iteration=iteration,
                         error=str(e),
                     )
                     try:
-                        await client.control_optimization(
-                            run_id,
-                            "fail",
-                            termination_reason=f"iteration_exception: {str(e)}",
-                        )
-                    except Exception as control_error:
-                        logger.error(
-                            "Failed to mark optimization as failed after exception",
-                            run_id=run_id,
-                            original_error=str(e),
-                            control_error=str(control_error),
-                        )
-                        # Continue anyway - return result to caller
+                        await client.control_optimization(run_id, "fail", termination_reason=str(e))
+                    except Exception:
+                        pass
                     return self._build_result(context, "exception", error=str(e))
 
-            # Check why loop ended
-            if context.status == "cancelled":
-                logger.info(
-                    "Optimization cancelled by user",
-                    run_id=run_id,
-                    iterations=context.current_iteration,
-                )
-                return self._build_result(context, "cancelled")
-            elif context.status == "paused":
-                logger.info(
-                    "Optimization paused",
-                    run_id=run_id,
-                    iterations=context.current_iteration,
-                )
-                return self._build_result(context, "paused")
-            elif context.status in ("completed", "failed"):
-                logger.info(
-                    "Optimization already finished",
-                    run_id=run_id,
-                    status=context.status,
-                    iterations=context.current_iteration,
-                )
-                return self._build_result(context, context.status)
-            else:
-                # Max iterations reached
-                logger.info(
-                    "Max iterations reached",
-                    run_id=run_id,
-                    iterations=context.current_iteration,
-                )
+            # ========== Max Iterations Reached ==========
+            if context.status not in ("cancelled", "paused", "completed", "failed"):
+                logger.info("Max iterations reached", run_id=run_id, max_iterations=max_iterations)
                 try:
                     await client.control_optimization(
                         run_id,
@@ -220,13 +243,10 @@ class OrchestratorRunner:
                         best_strategy_id=context.best_strategy_id,
                     )
                 except Exception as e:
-                    logger.error(
-                        "Failed to mark optimization as complete after max iterations",
-                        run_id=run_id,
-                        error=str(e),
-                    )
-                    # Continue anyway - return result to caller
+                    logger.error("Failed to complete optimization", error=str(e))
                 return self._build_result(context, "max_iterations")
+
+            return self._build_result(context, context.status)
 
     async def resume_optimization(self, run_id: str) -> dict[str, Any]:
         """Resume an optimization from where it left off.
@@ -287,6 +307,8 @@ class OrchestratorRunner:
             "max_iterations": context.max_iterations,
             "best_strategy_id": context.best_strategy_id,
             "best_sharpe": context.best_sharpe,
+            "baseline_completed": context.baseline_completed,
+            "baseline_result": context.baseline_result,
             "termination_reason": termination_reason,
             "status": "completed" if termination_reason in ("approved", "max_iterations") else "failed",
         }

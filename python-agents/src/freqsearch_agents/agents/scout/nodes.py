@@ -3,18 +3,47 @@
 Each node is an async function that takes state and returns partial state updates.
 """
 
+import os
 from typing import Any
 
 import structlog
 
 from ...core.state import ScoutState
 from ...core.messaging import publish_event, Events
-from ...tools.sources.stratninja import StratNinjaSource
+from ...tools.sources import (
+    StratNinjaSource,
+    GitHubSource,
+    GitHubConfig,
+    GitHubSearchMode,
+    TradingViewGitHubSource,
+)
 from ...tools.code.parser import FreqtradeCodeParser
 from ...tools.code.simhash import compute_code_hash, deduplicate_strategies
-from ...schemas.strategy import RawStrategy, StrategySource
 
 logger = structlog.get_logger(__name__)
+
+
+# Source registry: Maps source names to factory functions
+# Factory functions allow lazy instantiation with proper configuration
+SOURCE_REGISTRY = {
+    "stratninja": lambda: StratNinjaSource(),
+    "github_repo": lambda: GitHubSource(
+        GitHubConfig(
+            token=os.getenv("GITHUB_TOKEN"),
+            min_stars=5,
+            search_mode=GitHubSearchMode.REPOSITORIES,
+        )
+    ),
+    "github_code": lambda: GitHubSource(
+        GitHubConfig(
+            token=os.getenv("GITHUB_TOKEN"),
+            search_mode=GitHubSearchMode.CODE,
+        )
+    ),
+    "tradingview": lambda: TradingViewGitHubSource(
+        github_token=os.getenv("GITHUB_TOKEN"),
+    ),
+}
 
 
 async def fetch_strategies_node(
@@ -52,24 +81,42 @@ async def fetch_strategies_node(
             },
         )
 
-    # Select source implementation
-    if source_name == "stratninja":
-        source = StratNinjaSource()
-    else:
+    # Select source implementation from registry
+    source_factory = SOURCE_REGISTRY.get(source_name)
+
+    if not source_factory:
+        available_sources = list(SOURCE_REGISTRY.keys())
         return {
-            "errors": state["errors"] + [f"Unknown source: {source_name}"],
+            "errors": state["errors"] + [
+                f"Unknown source: {source_name}. Available sources: {', '.join(available_sources)}"
+            ],
             "total_fetched": 0,
         }
 
     try:
+        # Instantiate source from factory
+        source = source_factory()
+
         # Fetch strategy list and code
-        strategies = await source.fetch_strategies(limit=limit)
+        # Note: GitHub sources have __aenter__/__aexit__ for async context management
+        if hasattr(source, "__aenter__"):
+            async with source:
+                strategies = await source.fetch_strategies(limit=limit)
+        else:
+            strategies = await source.fetch_strategies(limit=limit)
 
         # Convert to dictionaries for state
         raw_strategies = []
         for s in strategies:
             # Compute code hash
             code_hash = compute_code_hash(s.code) if s.code else ""
+
+            # Detect Pine Script strategies (from TradingView source)
+            # Pine Script will be marked for conversion by Engineer agent
+            is_pine_script = (
+                source_name == "tradingview" or
+                (s.code and ("//@version=" in s.code or "strategy(" in s.code[:200]))
+            )
 
             raw_strategies.append({
                 "name": s.name,
@@ -80,6 +127,7 @@ async def fetch_strategies_node(
                 "timeframe": s.timeframe,
                 "stoploss": s.stoploss,
                 "description": s.description,
+                "is_pine_script": is_pine_script,
             })
 
         logger.info("Fetched strategies", count=len(raw_strategies))
@@ -148,10 +196,12 @@ async def validate_strategies_node(
     validated = []
     failed_count = 0
     failed_strategies = []  # Track failed strategies for detailed logging
+    pine_script_count = 0  # Track Pine Scripts marked for conversion
 
     for strategy in state["raw_strategies"]:
         strategy_name = strategy.get("name", "unknown")
         code = strategy.get("code", "")
+        is_pine_script = strategy.get("is_pine_script", False)
 
         if not code:
             failed_count += 1
@@ -162,6 +212,28 @@ async def validate_strategies_node(
             })
             continue
 
+        # Handle Pine Script strategies - skip Python validation
+        if is_pine_script:
+            strategy["validation_status"] = "needs_conversion"
+            strategy["validation_errors"] = []
+            strategy["parse_result"] = {
+                "class_name": None,
+                "indicators": [],
+                "parameters": [],
+                "uses_deprecated_api": False,
+                "is_pine_script": True,
+                "conversion_required": True,
+            }
+            validated.append(strategy)
+            pine_script_count += 1
+            logger.debug(
+                "Pine Script strategy marked for conversion",
+                name=strategy_name,
+                source_url=strategy.get("source_url"),
+            )
+            continue
+
+        # Standard Python validation for Freqtrade strategies
         result = parser.parse(code, strategy_name=strategy_name)
 
         if result.is_valid and result.is_strategy:
@@ -236,6 +308,7 @@ async def validate_strategies_node(
         "Validation complete",
         valid=len(validated),
         failed=failed_count,
+        pine_script_count=pine_script_count,
     )
 
     # Publish progress: validation complete (50%)
@@ -246,10 +319,14 @@ async def validate_strategies_node(
                 "run_id": run_id,
                 "stage": "validate",
                 "progress": 50,
-                "message": f"Validated {len(validated)} strategies, {failed_count} failed",
+                "message": (
+                    f"Validated {len(validated)} strategies "
+                    f"({pine_script_count} Pine Scripts), {failed_count} failed"
+                ),
                 "stage_metrics": {
                     "validated": len(validated),
                     "validation_failed": failed_count,
+                    "pine_script_count": pine_script_count,
                 },
             },
         )
@@ -288,7 +365,10 @@ async def deduplicate_node(
                 "run_id": run_id,
                 "stage": "deduplicate",
                 "progress": 50,
-                "message": f"Starting deduplication of {len(state['validated_strategies'])} strategies",
+                "message": (
+                    f"Starting deduplication of "
+                    f"{len(state['validated_strategies'])} strategies"
+                ),
             },
         )
 
@@ -302,7 +382,7 @@ async def deduplicate_node(
 
     # TODO: Fetch existing hashes from database via gRPC
     # For now, just deduplicate within the current batch
-    existing_hashes: list[str] = []
+    # existing_hashes: list[str] = []
 
     # Deduplicate within batch
     unique, duplicates = deduplicate_strategies(
@@ -316,7 +396,7 @@ async def deduplicate_node(
     # (This will be implemented when gRPC client is ready)
     final_unique = []
     for strategy in unique:
-        code_hash = strategy.get("code_hash", "")
+        # code_hash = strategy.get("code_hash", "")
         # Skip if hash matches existing
         # For now, accept all
         final_unique.append(strategy)
@@ -335,7 +415,10 @@ async def deduplicate_node(
                 "run_id": run_id,
                 "stage": "deduplicate",
                 "progress": 75,
-                "message": f"Found {len(final_unique)} unique strategies, removed {len(strategies) - len(final_unique)} duplicates",
+                "message": (
+                    f"Found {len(final_unique)} unique strategies, "
+                    f"removed {len(strategies) - len(final_unique)} duplicates"
+                ),
                 "stage_metrics": {
                     "unique": len(final_unique),
                     "duplicates_removed": len(strategies) - len(final_unique),
@@ -386,6 +469,10 @@ async def submit_strategies_node(
 
     for strategy in strategies:
         try:
+            # Check if this is a Pine Script that needs conversion
+            is_pine_script = strategy.get("is_pine_script", False)
+            validation_status = strategy.get("validation_status", "valid")
+
             # Prepare event payload
             event_data = {
                 "name": strategy.get("name", ""),
@@ -398,6 +485,8 @@ async def submit_strategies_node(
                 "stoploss": strategy.get("stoploss"),
                 "is_valid": True,
                 "validation_errors": [],
+                "is_pine_script": is_pine_script,
+                "needs_conversion": validation_status == "needs_conversion",
             }
 
             # Publish to message queue

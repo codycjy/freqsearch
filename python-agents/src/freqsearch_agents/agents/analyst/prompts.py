@@ -1,5 +1,22 @@
 """Prompt templates for Analyst Agent."""
 
+CODE_REVIEW_SYSTEM_PROMPT = """You are a trading strategy code reviewer. Your job is to review code modifications and determine if they properly address the diagnosed issues.
+
+Output your review as JSON:
+{
+    "approved": true/false,
+    "feedback": "Explanation of your decision",
+    "issues": ["issue1", "issue2"]
+}
+
+Approval criteria:
+- Code implements the suggested modification
+- No new bugs or issues introduced
+- Trading logic is sound
+- Code is syntactically correct
+
+Be lenient - if the code makes a reasonable attempt at the fix, approve it."""
+
 
 def get_analysis_prompt(
     strategy_name: str,
@@ -86,3 +103,52 @@ def get_detailed_trade_analysis_prompt(
 4. Could a simple filter have prevented these losses?
 
 Provide insights that can help improve the strategy."""
+
+
+def get_code_review_prompt(
+    code: str,
+    diagnosis: dict,
+    baseline_result: dict | None = None,
+) -> str:
+    """Generate code review prompt.
+
+    Args:
+        code: The strategy code to review
+        diagnosis: The diagnosis report that led to this modification
+        baseline_result: Optional baseline backtest result
+
+    Returns:
+        Formatted prompt for code review
+    """
+    suggestion_type = diagnosis.get("suggestion_type", "UNKNOWN")
+    suggestion_desc = diagnosis.get("suggestion_description", "No specific suggestion")
+    issues = diagnosis.get("issues", [])
+
+    baseline_info = ""
+    if baseline_result:
+        baseline_info = f"""
+## Baseline Performance
+- Total Trades: {baseline_result.get('total_trades', 'N/A')}
+- Profit: {baseline_result.get('profit_pct', 'N/A')}%
+- Win Rate: {baseline_result.get('win_rate', 'N/A')}
+- Sharpe Ratio: {baseline_result.get('sharpe_ratio', 'N/A')}
+"""
+
+    return f"""Review this strategy code modification:
+
+## Diagnosis that led to this modification
+- Suggestion Type: {suggestion_type}
+- Suggestion: {suggestion_desc}
+- Issues to fix: {', '.join(issues) if issues else 'None specified'}
+{baseline_info}
+## Modified Code
+```python
+{code}
+```
+
+## Your Task
+1. Check if the code addresses the diagnosed issues
+2. Verify no new problems are introduced
+3. Determine if this code is ready for backtesting
+
+Output your review as JSON with "approved" (boolean), "feedback" (string), and "issues" (array)."""

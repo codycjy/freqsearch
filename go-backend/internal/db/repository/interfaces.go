@@ -39,6 +39,11 @@ type StrategyRepository interface {
 
 	// GetAncestors retrieves all ancestors of a strategy.
 	GetAncestors(ctx context.Context, strategyID uuid.UUID) ([]*domain.Strategy, error)
+
+	// GetStrategyHashes retrieves hash information (SHA256 and SimHash) for all strategies.
+	// Used by Python agents for dual-hash deduplication.
+	// Limit parameter controls the number of strategies to return (0 = all).
+	GetStrategyHashes(ctx context.Context, limit int) ([]domain.StrategyHash, error)
 }
 
 // BacktestJobRepository defines the interface for backtest job data access.
