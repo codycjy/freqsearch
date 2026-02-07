@@ -14,7 +14,11 @@ from ...schemas.diagnosis import (
     SuggestionType,
     MetricsSummary,
 )
-from .prompts import get_analysis_prompt
+from .prompts import (
+    get_analysis_prompt,
+    get_code_review_prompt,
+    CODE_REVIEW_SYSTEM_PROMPT,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -210,14 +214,44 @@ async def generate_diagnosis_node(
     root_causes = []
 
     # Check minimum requirements
-    if metrics["total_trades"] < 10:
-        issues.append("Insufficient trades for meaningful analysis")
+    if metrics["total_trades"] == 0:
+        # Zero trades means entry conditions are too strict or contradictory
+        issues.append("No trades executed - entry conditions never triggered")
+        root_causes.append("Entry conditions may be too restrictive or logically contradictory")
         return {
             "issues": issues,
-            "decision": DiagnosisStatus.ARCHIVE.value,
-            "confidence": 0.9,
-            "suggestion_type": None,
-            "suggestion_description": "Strategy produces too few trades to analyze.",
+            "root_causes": root_causes,
+            "decision": DiagnosisStatus.NEEDS_MODIFICATION.value,
+            "confidence": 0.95,
+            "suggestion_type": SuggestionType.MODIFY_CONDITION.value,
+            "suggestion_description": (
+                "CRITICAL: Strategy produced ZERO trades. The entry conditions are too restrictive "
+                "or logically contradictory. Common issues: "
+                "1) Combining RSI oversold (<30) with bullish EMA crossover - these rarely happen together. "
+                "2) Too many AND conditions that can't all be true simultaneously. "
+                "3) Threshold values that are never reached (e.g., RSI<20 is very rare). "
+                "FIX: Use more relaxed thresholds (RSI<40 instead of <30), OR use fewer conditions, "
+                "OR use conditions that naturally occur together (e.g., RSI<40 AND price above EMA, "
+                "not RSI<30 AND EMA crossover)."
+            ),
+            "target_metrics": ["total_trades", "entry_conditions"],
+        }
+    elif metrics["total_trades"] < 10:
+        issues.append("Insufficient trades for meaningful analysis")
+        root_causes.append("Entry conditions may be slightly too restrictive")
+        return {
+            "issues": issues,
+            "root_causes": root_causes,
+            "decision": DiagnosisStatus.NEEDS_MODIFICATION.value,
+            "confidence": 0.85,
+            "suggestion_type": SuggestionType.MODIFY_CONDITION.value,
+            "suggestion_description": (
+                "Strategy produced too few trades (<10). Consider relaxing entry conditions: "
+                "1) Widen RSI thresholds (use <40 instead of <30 for oversold). "
+                "2) Remove one or more restrictive conditions. "
+                "3) Use OR logic instead of AND for some conditions."
+            ),
+            "target_metrics": ["total_trades"],
         }
 
     # Check for severe issues
@@ -513,3 +547,105 @@ def _generate_enhanced_description(
     parts.append(f"Best suited for {regime_str} market conditions.")
 
     return " ".join(parts)
+
+
+async def review_code_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Review code against diagnosis recommendations.
+
+    Runs before backtest to check if Engineer's modifications are reasonable.
+    This helps catch obvious issues before wasting time on backtesting.
+
+    Args:
+        state: State dict containing:
+            - code: Strategy code to review
+            - diagnosis: Diagnosis report that led to this modification
+            - baseline_result: Optional baseline backtest result
+
+    Returns:
+        State update with review results:
+            - approved: Boolean indicating if code passes review
+            - feedback: Explanation of the decision
+            - issues: List of identified issues (empty if approved)
+    """
+    code = state.get("code", "")
+    diagnosis = state.get("diagnosis", {})
+    baseline_result = state.get("baseline_result", {})
+
+    if not code:
+        return {
+            "approved": False,
+            "feedback": "No code provided for review",
+            "issues": ["No code"],
+        }
+
+    logger.info("Reviewing code against diagnosis")
+
+    # Get LLM for review
+    llm = get_llm()
+
+    prompt = get_code_review_prompt(
+        code=code,
+        diagnosis=diagnosis,
+        baseline_result=baseline_result,
+    )
+
+    messages = [
+        {"role": "system", "content": CODE_REVIEW_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        response = await llm.ainvoke(messages)
+        result = _parse_code_review_response(response.content)
+
+        logger.info(
+            "Code review completed",
+            approved=result.get("approved"),
+            issues=result.get("issues", []),
+        )
+
+        return result
+
+    except Exception as e:
+        logger.exception("Code review failed", error=str(e))
+        return {
+            "approved": True,  # Allow pass on review failure to avoid blocking
+            "feedback": f"Review error: {str(e)}",
+            "issues": [],
+        }
+
+
+def _parse_code_review_response(response: str) -> dict[str, Any]:
+    """Parse code review response from LLM.
+
+    Extracts JSON from the response or falls back to heuristic parsing.
+
+    Args:
+        response: Raw LLM response text
+
+    Returns:
+        Dictionary with approved, feedback, and issues fields
+    """
+    import json
+    import re
+
+    # Try to extract JSON
+    json_match = re.search(r"\{[\s\S]*\}", response)
+    if json_match:
+        try:
+            data = json.loads(json_match.group())
+            return {
+                "approved": data.get("approved", False),
+                "feedback": data.get("feedback", ""),
+                "issues": data.get("issues", []),
+            }
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback: heuristic parsing if JSON extraction fails
+    approved = "APPROVED" in response.upper() or "PASS" in response.upper()
+    return {
+        "approved": approved,
+        "feedback": response,
+        "issues": [],
+    }

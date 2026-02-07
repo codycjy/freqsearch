@@ -144,6 +144,30 @@ func (m *mockEventPublisher) PublishTaskCancelled(job *domain.BacktestJob) error
 	return nil
 }
 
+func (m *mockEventPublisher) PublishTaskCreated(job *domain.BacktestJob) error {
+	return nil
+}
+
+func (m *mockEventPublisher) PublishOptimizationStarted(run *domain.OptimizationRun) error {
+	return nil
+}
+
+func (m *mockEventPublisher) PublishOptimizationIteration(event *events.OptimizationIterationEvent) error {
+	return nil
+}
+
+func (m *mockEventPublisher) PublishOptimizationCompleted(run *domain.OptimizationRun) error {
+	return nil
+}
+
+func (m *mockEventPublisher) PublishOptimizationFailed(run *domain.OptimizationRun, reason string) error {
+	return nil
+}
+
+func (m *mockEventPublisher) PublishOptimizationStatusChanged(run *domain.OptimizationRun, oldStatus, newStatus string) error {
+	return nil
+}
+
 func (m *mockEventPublisher) PublishScoutTrigger(event *events.ScoutTriggerEvent) error {
 	m.publishedEvents = append(m.publishedEvents, event)
 	return nil

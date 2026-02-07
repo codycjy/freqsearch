@@ -7,21 +7,23 @@ near-duplicate strategies efficiently.
 
 import re
 import hashlib
+import tokenize
+import io
 from typing import Sequence
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
+# Default Hamming distance threshold for SimHash comparison
+# Lower values = stricter matching (only very similar code)
+# Higher values = more lenient (catches more variations)
+# 3 = only formatting changes, 10 = catches meaningful variations
+DEFAULT_SIMHASH_THRESHOLD = 10
 
-def normalize_code(code: str) -> str:
-    """Normalize Python code for comparison.
 
-    Removes:
-    - Comments
-    - Docstrings
-    - Extra whitespace
-    - Variable name variations (optional)
+def _simple_normalize(code: str) -> str:
+    """Fallback normalization using simple regex-based approach.
 
     Args:
         code: Python source code
@@ -64,7 +66,7 @@ def normalize_code(code: str) -> str:
         if in_multiline_string:
             continue
 
-        # Remove inline comments
+        # Remove inline comments (but this incorrectly truncates strings with #)
         if "#" in stripped:
             # Simple heuristic: split on # not in strings
             # This is imperfect but good enough for similarity
@@ -79,6 +81,73 @@ def normalize_code(code: str) -> str:
         lines.append(stripped)
 
     return " ".join(lines)
+
+
+def normalize_code(code: str) -> str:
+    """Normalize Python code for comparison using proper tokenization.
+
+    Removes:
+    - Comments (properly handling # inside strings)
+    - Docstrings (triple-quoted strings at module/function/class level)
+    - Extra whitespace
+
+    Uses Python's tokenize module to properly distinguish between
+    comments and # characters inside strings.
+
+    Args:
+        code: Python source code
+
+    Returns:
+        Normalized code string
+    """
+    try:
+        tokens = []
+        prev_token_type = None
+        # Track if we just saw a colon (potential docstring follows)
+        expect_docstring = False
+
+        for tok in tokenize.generate_tokens(io.StringIO(code).readline):
+            # Skip comments
+            if tok.type == tokenize.COMMENT:
+                continue
+
+            # Skip ENCODING and ENDMARKER tokens
+            if tok.type in (tokenize.ENCODING, tokenize.ENDMARKER):
+                continue
+
+            # Detect docstrings: STRING token after NEWLINE/INDENT at start
+            # or after ':' followed by NEWLINE/INDENT
+            if tok.type == tokenize.STRING:
+                tok_str = tok.string
+                # Check if it's a triple-quoted string (docstring candidate)
+                if tok_str.startswith('"""') or tok_str.startswith("'''"):
+                    # Skip docstrings (triple-quoted strings in docstring positions)
+                    if expect_docstring or prev_token_type in (
+                        tokenize.NEWLINE,
+                        tokenize.INDENT,
+                        tokenize.NL,
+                        None,  # Module-level docstring
+                    ):
+                        expect_docstring = False
+                        continue
+
+            # Track when we see a colon (def/class), next string might be docstring
+            if tok.type == tokenize.OP and tok.string == ':':
+                expect_docstring = True
+            elif tok.type not in (tokenize.NEWLINE, tokenize.INDENT, tokenize.NL, tokenize.DEDENT):
+                expect_docstring = False
+
+            tokens.append(tok.string)
+            prev_token_type = tok.type
+
+        # Join tokens with spaces and normalize whitespace
+        result = " ".join(tokens)
+        result = re.sub(r"\s+", " ", result)
+        return result.strip()
+    except tokenize.TokenizeError:
+        # Fallback to simple normalization if tokenization fails
+        logger.debug("Tokenization failed, using simple normalization")
+        return _simple_normalize(code)
 
 
 def _shingles(text: str, k: int = 3) -> set[str]:
@@ -172,6 +241,23 @@ def compute_code_hash(code: str) -> str:
     return hex(simhash)[2:]  # Remove '0x' prefix
 
 
+def compute_sha256_hash(code: str) -> str:
+    """Compute SHA256 hash for exact deduplication.
+
+    This hash is used for exact matching across batches. Unlike SimHash,
+    two codes will only have the same SHA256 hash if they are identical
+    after normalization (same logic, ignoring comments/whitespace).
+
+    Args:
+        code: Python source code
+
+    Returns:
+        SHA256 hash as hex string
+    """
+    normalized = normalize_code(code)
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+
 def hamming_distance(hash1: int, hash2: int) -> int:
     """Calculate Hamming distance between two hashes.
 
@@ -191,7 +277,7 @@ def hamming_distance(hash1: int, hash2: int) -> int:
 def is_duplicate_code(
     hash1: str,
     hash2: str,
-    threshold: int = 3,
+    threshold: int = DEFAULT_SIMHASH_THRESHOLD,
 ) -> bool:
     """Check if two code hashes indicate duplicate/similar code.
 
@@ -199,6 +285,7 @@ def is_duplicate_code(
         hash1: First SimHash (hex string)
         hash2: Second SimHash (hex string)
         threshold: Maximum Hamming distance to consider as duplicate
+                  (default: DEFAULT_SIMHASH_THRESHOLD = 10)
 
     Returns:
         True if the codes are considered duplicates
@@ -215,13 +302,14 @@ def is_duplicate_code(
 
 def find_duplicates(
     hashes: Sequence[tuple[str, str]],
-    threshold: int = 3,
+    threshold: int = DEFAULT_SIMHASH_THRESHOLD,
 ) -> list[tuple[str, str, int]]:
     """Find all duplicate pairs in a list of (id, hash) tuples.
 
     Args:
         hashes: List of (identifier, hash) tuples
         threshold: Maximum Hamming distance for duplicates
+                  (default: DEFAULT_SIMHASH_THRESHOLD = 10)
 
     Returns:
         List of (id1, id2, distance) tuples for duplicates
@@ -247,7 +335,7 @@ def deduplicate_strategies(
     strategies: list[dict],
     hash_field: str = "code_hash",
     id_field: str = "name",
-    threshold: int = 3,
+    threshold: int = DEFAULT_SIMHASH_THRESHOLD,
 ) -> tuple[list[dict], list[dict]]:
     """Remove duplicate strategies from a list.
 
@@ -256,6 +344,7 @@ def deduplicate_strategies(
         hash_field: Field name containing the code hash
         id_field: Field name for strategy identifier
         threshold: Hamming distance threshold
+                  (default: DEFAULT_SIMHASH_THRESHOLD = 10)
 
     Returns:
         Tuple of (unique strategies, duplicate strategies)
