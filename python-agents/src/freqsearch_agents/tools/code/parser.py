@@ -1,6 +1,7 @@
 """Freqtrade strategy code parser using Python AST."""
 
 import ast
+import contextlib
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -82,6 +83,10 @@ class ParseResult:
     uses_deprecated_api: bool = False
     deprecated_methods: list[str] = field(default_factory=list)
 
+    # Validation results
+    signature_errors: list[str] = field(default_factory=list)
+    has_valid_signals: bool = False
+
 
 class FreqtradeCodeParser:
     """Parser for Freqtrade strategy Python code.
@@ -104,23 +109,152 @@ class FreqtradeCodeParser:
         "populate_sell_trend",
     ]
 
-    # Common indicator patterns to detect
+    # Common indicator patterns to detect (100+ patterns)
     INDICATOR_PATTERNS = [
-        (r"\bta\.(\w+)", "ta"),  # ta.RSI, ta.EMA, etc.
-        (r"\bqtpylib\.(\w+)", "qtpylib"),  # qtpylib patterns
-        (r"\bEMA\s*\(", "EMA"),
+        # TA-Lib Moving Averages
         (r"\bSMA\s*\(", "SMA"),
+        (r"\bEMA\s*\(", "EMA"),
+        (r"\bWMA\s*\(", "WMA"),
+        (r"\bDEMA\s*\(", "DEMA"),
+        (r"\bTEMA\s*\(", "TEMA"),
+        (r"\bTRIMA\s*\(", "TRIMA"),
+        (r"\bKAMA\s*\(", "KAMA"),
+        (r"\bMAMA\s*\(", "MAMA"),
+        (r"\bT3\s*\(", "T3"),
+
+        # TA-Lib Momentum Indicators
         (r"\bRSI\s*\(", "RSI"),
         (r"\bMACD\s*\(", "MACD"),
-        (r"\bBBands\s*\(", "Bollinger Bands"),
-        (r"\bADX\s*\(", "ADX"),
-        (r"\bATR\s*\(", "ATR"),
+        (r"\bMOM\s*\(", "Momentum"),
+        (r"\bROC\s*\(", "ROC"),
+        (r"\bROCP\s*\(", "ROCP"),
+        (r"\bROCR\s*\(", "ROCR"),
+        (r"\bROCR100\s*\(", "ROCR100"),
+        (r"\bPPO\s*\(", "PPO"),
+        (r"\bAPO\s*\(", "APO"),
         (r"\bCCI\s*\(", "CCI"),
-        (r"\bSTOCH\s*\(", "Stochastic"),
+        (r"\bCMO\s*\(", "CMO"),
         (r"\bMFI\s*\(", "MFI"),
+        (r"\bSTOCH\s*\(", "Stochastic"),
+        (r"\bSTOCHF\s*\(", "Stochastic Fast"),
+        (r"\bSTOCHRSI\s*\(", "Stochastic RSI"),
+        (r"\bWILLR\s*\(", "Williams %R"),
+        (r"\bULTOSC\s*\(", "Ultimate Oscillator"),
+        (r"\bTRIX\s*\(", "TRIX"),
+        (r"\bBOP\s*\(", "Balance of Power"),
+
+        # TA-Lib Trend Indicators
+        (r"\bADX\s*\(", "ADX"),
+        (r"\bADXR\s*\(", "ADXR"),
+        (r"\bDX\s*\(", "DX"),
+        (r"\bMINUS_DI\s*\(", "Minus DI"),
+        (r"\bPLUS_DI\s*\(", "Plus DI"),
+        (r"\bMINUS_DM\s*\(", "Minus DM"),
+        (r"\bPLUS_DM\s*\(", "Plus DM"),
+        (r"\bAROON\s*\(", "Aroon"),
+        (r"\bAROONOSC\s*\(", "Aroon Oscillator"),
+        (r"\bSAR\s*\(", "Parabolic SAR"),
+        (r"\bSAREXT\s*\(", "Parabolic SAR Extended"),
+
+        # TA-Lib Volatility Indicators
+        (r"\bATR\s*\(", "ATR"),
+        (r"\bNATR\s*\(", "Normalized ATR"),
+        (r"\bTRANGE\s*\(", "True Range"),
+        (r"\bBBANDS\s*\(", "Bollinger Bands"),
+
+        # TA-Lib Volume Indicators
         (r"\bOBV\s*\(", "OBV"),
-        (r"\bIchimoku", "Ichimoku"),
+        (r"\bAD\s*\(", "Chaikin A/D"),
+        (r"\bADOSC\s*\(", "Chaikin A/D Oscillator"),
+
+        # TA-Lib Candlestick Patterns
+        (r"\bCDL2CROWS\s*\(", "Two Crows"),
+        (r"\bCDL3BLACKCROWS\s*\(", "Three Black Crows"),
+        (r"\bCDL3INSIDE\s*\(", "Three Inside Up/Down"),
+        (r"\bCDL3LINESTRIKE\s*\(", "Three-Line Strike"),
+        (r"\bCDL3OUTSIDE\s*\(", "Three Outside Up/Down"),
+        (r"\bCDL3STARSINSOUTH\s*\(", "Three Stars In The South"),
+        (r"\bCDL3WHITESOLDIERS\s*\(", "Three Advancing White Soldiers"),
+        (r"\bCDLABANDONEDBABY\s*\(", "Abandoned Baby"),
+        (r"\bCDLADVANCEBLOCK\s*\(", "Advance Block"),
+        (r"\bCDLBELTHOLD\s*\(", "Belt-hold"),
+        (r"\bCDLBREAKAWAY\s*\(", "Breakaway"),
+        (r"\bCDLCLOSINGMARUBOZU\s*\(", "Closing Marubozu"),
+        (r"\bCDLCONCEALBABYSWALL\s*\(", "Concealing Baby Swallow"),
+        (r"\bCDLCOUNTERATTACK\s*\(", "Counterattack"),
+        (r"\bCDLDARKCLOUDCOVER\s*\(", "Dark Cloud Cover"),
+        (r"\bCDLDOJI\s*\(", "Doji"),
+        (r"\bCDLDOJISTAR\s*\(", "Doji Star"),
+        (r"\bCDLDRAGONFLYDOJI\s*\(", "Dragonfly Doji"),
+        (r"\bCDLENGULFING\s*\(", "Engulfing Pattern"),
+        (r"\bCDLEVENINGDOJISTAR\s*\(", "Evening Doji Star"),
+        (r"\bCDLEVENINGSTAR\s*\(", "Evening Star"),
+        (r"\bCDLGAPSIDESIDEWHITE\s*\(", "Up/Down-gap side-by-side white lines"),
+        (r"\bCDLGRAVESTONEDOJI\s*\(", "Gravestone Doji"),
+        (r"\bCDLHAMMER\s*\(", "Hammer"),
+        (r"\bCDLHANGINGMAN\s*\(", "Hanging Man"),
+        (r"\bCDLHARAMI\s*\(", "Harami Pattern"),
+        (r"\bCDLHARAMICROSS\s*\(", "Harami Cross Pattern"),
+        (r"\bCDLHIGHWAVE\s*\(", "High-Wave Candle"),
+        (r"\bCDLHIKKAKE\s*\(", "Hikkake Pattern"),
+        (r"\bCDLHIKKAKEMOD\s*\(", "Modified Hikkake Pattern"),
+        (r"\bCDLHOMINGPIGEON\s*\(", "Homing Pigeon"),
+        (r"\bCDLIDENTICAL3CROWS\s*\(", "Identical Three Crows"),
+        (r"\bCDLINNECK\s*\(", "In-Neck Pattern"),
+        (r"\bCDLINVERTEDHAMMER\s*\(", "Inverted Hammer"),
+        (r"\bCDLKICKING\s*\(", "Kicking"),
+        (r"\bCDLKICKINGBYLENGTH\s*\(", "Kicking - bull/bear determined by the longer marubozu"),
+        (r"\bCDLLADDERBOTTOM\s*\(", "Ladder Bottom"),
+        (r"\bCDLLONGLEGGEDDOJI\s*\(", "Long Legged Doji"),
+        (r"\bCDLLONGLINE\s*\(", "Long Line Candle"),
+        (r"\bCDLMARUBOZU\s*\(", "Marubozu"),
+        (r"\bCDLMATCHINGLOW\s*\(", "Matching Low"),
+        (r"\bCDLMATHOLD\s*\(", "Mat Hold"),
+        (r"\bCDLMORNINGDOJISTAR\s*\(", "Morning Doji Star"),
+        (r"\bCDLMORNINGSTAR\s*\(", "Morning Star"),
+        (r"\bCDLONNECK\s*\(", "On-Neck Pattern"),
+        (r"\bCDLPIERCING\s*\(", "Piercing Pattern"),
+        (r"\bCDLRICKSHAWMAN\s*\(", "Rickshaw Man"),
+        (r"\bCDLRISEFALL3METHODS\s*\(", "Rising/Falling Three Methods"),
+        (r"\bCDLSEPARATINGLINES\s*\(", "Separating Lines"),
+        (r"\bCDLSHOOTINGSTAR\s*\(", "Shooting Star"),
+        (r"\bCDLSHORTLINE\s*\(", "Short Line Candle"),
+        (r"\bCDLSPINNINGTOP\s*\(", "Spinning Top"),
+        (r"\bCDLSTALLEDPATTERN\s*\(", "Stalled Pattern"),
+        (r"\bCDLSTICKSANDWICH\s*\(", "Stick Sandwich"),
+        (r"\bCDLTAKURI\s*\(", "Takuri (Dragonfly Doji with very long lower shadow)"),
+        (r"\bCDLTASUKIGAP\s*\(", "Tasuki Gap"),
+        (r"\bCDLTHRUSTING\s*\(", "Thrusting Pattern"),
+        (r"\bCDLTRISTAR\s*\(", "Tristar Pattern"),
+        (r"\bCDLUNIQUE3RIVER\s*\(", "Unique 3 River"),
+        (r"\bCDLUPSIDEGAP2CROWS\s*\(", "Upside Gap Two Crows"),
+        (r"\bCDLXSIDEGAP3METHODS\s*\(", "Upside/Downside Gap Three Methods"),
+
+        # qtpylib indicators
+        (r"\bcrossed_above\s*\(", "crossed_above"),
+        (r"\bcrossed_below\s*\(", "crossed_below"),
+        (r"\brolling_mean\s*\(", "rolling_mean"),
+        (r"\brolling_std\s*\(", "rolling_std"),
+        (r"\bheikinashi\s*\(", "Heikin Ashi"),
+        (r"\bweighted_bollinger_bands\s*\(", "Weighted Bollinger Bands"),
+        (r"\bpvt\s*\(", "Price Volume Trend"),
+
+        # Popular custom indicators
         (r"\bSuperTrend", "SuperTrend"),
+        (r"\bIchimoku", "Ichimoku"),
+        (r"\bVWAP\s*\(", "VWAP"),
+        (r"\bPivot", "Pivot Points"),
+        (r"\bFibonacci", "Fibonacci"),
+        (r"\bDonchian", "Donchian Channel"),
+        (r"\bKeltner", "Keltner Channel"),
+
+        # Technical Analysis library (ta)
+        (r"\bta\.(\w+)", "ta"),  # ta.RSI, ta.EMA, etc.
+        (r"\bqtpylib\.(\w+)", "qtpylib"),  # qtpylib patterns
+        (r"ta\.momentum\.", "ta.momentum"),
+        (r"ta\.trend\.", "ta.trend"),
+        (r"ta\.volatility\.", "ta.volatility"),
+        (r"ta\.volume\.", "ta.volume"),
     ]
 
     # Parameter type patterns
@@ -191,6 +325,12 @@ class FreqtradeCodeParser:
 
         # Check for deprecated API usage
         self._check_deprecated_api(result)
+
+        # Validate method signatures
+        result.signature_errors = self._validate_method_signatures(tree)
+
+        # Validate signal columns
+        result.has_valid_signals = self._validate_signal_columns(preprocessed_code)
 
         return result
 
@@ -292,9 +432,8 @@ class FreqtradeCodeParser:
                                             param_info["high"] = arg.value
 
                                 for kw in node.value.keywords:
-                                    if kw.arg in ("low", "high", "default", "space"):
-                                        if isinstance(kw.value, ast.Constant):
-                                            param_info[kw.arg] = kw.value.value
+                                    if kw.arg in ("low", "high", "default", "space") and isinstance(kw.value, ast.Constant):
+                                        param_info[kw.arg] = kw.value.value
 
                                 result.parameters.append(param_info)
 
@@ -312,10 +451,8 @@ class FreqtradeCodeParser:
 
         stoploss_match = re.search(r"stoploss\s*=\s*(-?[\d.]+)", code)
         if stoploss_match:
-            try:
+            with contextlib.suppress(ValueError):
                 result.stoploss = float(stoploss_match.group(1))
-            except ValueError:
-                pass
 
         trailing_match = re.search(r"trailing_stop\s*=\s*(True|False)", code)
         if trailing_match:
@@ -368,6 +505,76 @@ class FreqtradeCodeParser:
                     result.deprecated_methods.append(method)
                 result.uses_deprecated_api = True
 
+    def _validate_method_signatures(self, tree: ast.AST) -> list[str]:
+        """Validate that required methods have correct signatures.
+
+        Args:
+            tree: AST tree of the parsed code
+
+        Returns:
+            List of validation error messages
+        """
+        errors = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                args = [a.arg for a in node.args.args]
+
+                if node.name == "populate_indicators":
+                    if args != ["self", "dataframe", "metadata"]:
+                        errors.append(
+                            f"populate_indicators has wrong signature: {args}, "
+                            "expected ['self', 'dataframe', 'metadata']"
+                        )
+                elif node.name == "populate_entry_trend":
+                    if args != ["self", "dataframe", "metadata"]:
+                        errors.append(
+                            f"populate_entry_trend has wrong signature: {args}, "
+                            "expected ['self', 'dataframe', 'metadata']"
+                        )
+                elif node.name == "populate_exit_trend":
+                    if args != ["self", "dataframe", "metadata"]:
+                        errors.append(
+                            f"populate_exit_trend has wrong signature: {args}, "
+                            "expected ['self', 'dataframe', 'metadata']"
+                        )
+                elif node.name == "populate_buy_trend":
+                    if args != ["self", "dataframe", "metadata"]:
+                        errors.append(
+                            f"populate_buy_trend has wrong signature: {args}, "
+                            "expected ['self', 'dataframe', 'metadata']"
+                        )
+                elif node.name == "populate_sell_trend" and args != ["self", "dataframe", "metadata"]:
+                    errors.append(
+                        f"populate_sell_trend has wrong signature: {args}, "
+                        "expected ['self', 'dataframe', 'metadata']"
+                    )
+        return errors
+
+    def _validate_signal_columns(self, code: str) -> bool:
+        """Validate that the strategy sets enter_long/exit_long signals.
+
+        Args:
+            code: Python source code string
+
+        Returns:
+            True if both enter_long and exit_long signals are set, False otherwise
+        """
+        # Support multiple patterns for setting signals
+        # Use DOTALL flag to match across newlines, and \s* to handle whitespace
+        enter_patterns = [
+            r"['\"]enter_long['\"]\s*]\s*=",  # dataframe['enter_long'] = 1
+            r"['\"]enter_long['\"]\s*\]\s*=",  # dataframe.loc[(...), 'enter_long'\n] = 1
+        ]
+        exit_patterns = [
+            r"['\"]exit_long['\"]\s*]\s*=",  # dataframe['exit_long'] = 1
+            r"['\"]exit_long['\"]\s*\]\s*=",  # dataframe.loc[(...), 'exit_long'\n] = 1
+        ]
+
+        has_enter = any(re.search(p, code, re.DOTALL) for p in enter_patterns)
+        has_exit = any(re.search(p, code, re.DOTALL) for p in exit_patterns)
+
+        return has_enter and has_exit
+
 
 def validate_strategy_code(
     code: str, strategy_name: str | None = None
@@ -395,6 +602,15 @@ def validate_strategy_code(
     if result.required_methods_missing:
         errors.append(
             f"Missing required methods: {', '.join(result.required_methods_missing)}"
+        )
+
+    if result.signature_errors:
+        errors.extend(result.signature_errors)
+
+    if not result.has_valid_signals:
+        errors.append(
+            "Missing required signal columns: strategy must set both "
+            "'enter_long' and 'exit_long' columns in dataframe"
         )
 
     return len(errors) == 0, errors

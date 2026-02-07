@@ -84,12 +84,15 @@ def create_analyst_agent() -> StateGraph:
 async def run_analyst(
     backtest_result: dict[str, Any],
     strategy_code: str | None = None,
+    diagnosis_mode: bool = False,
 ) -> dict[str, Any]:
     """Run the Analyst Agent to analyze a backtest result.
 
     Args:
         backtest_result: Backtest result data from Go backend
         strategy_code: Optional strategy code for deeper analysis
+        diagnosis_mode: If True, only diagnose issues without making final decision
+                       (used in Analyst-First architecture before Engineer)
 
     Returns:
         Final state with diagnosis and decision
@@ -98,6 +101,7 @@ async def run_analyst(
         "Starting Analyst Agent",
         job_id=backtest_result.get("job_id"),
         strategy=backtest_result.get("strategy_name"),
+        diagnosis_mode=diagnosis_mode,
     )
 
     agent = create_analyst_agent()
@@ -125,6 +129,10 @@ async def run_analyst(
     if strategy_code:
         initial_state["backtest_result"]["strategy_code"] = strategy_code
 
+    # Add diagnosis mode flag
+    if diagnosis_mode:
+        initial_state["backtest_result"]["diagnosis_mode"] = True
+
     # Run the agent
     final_state = await agent.ainvoke(initial_state)
 
@@ -133,6 +141,59 @@ async def run_analyst(
         strategy=backtest_result.get("strategy_name"),
         decision=final_state["decision"],
         confidence=final_state["confidence"],
+        diagnosis_mode=diagnosis_mode,
     )
 
     return final_state
+
+
+async def run_analyst_code_review(
+    code: str,
+    diagnosis: dict,
+    baseline_result: dict | None = None,
+) -> dict[str, Any]:
+    """Run Analyst code review on modified strategy code.
+
+    This function provides a standalone way to review code changes before
+    running a backtest. It's useful in the evolution loop where the Engineer
+    modifies code based on Analyst's diagnosis.
+
+    Args:
+        code: Strategy code to review
+        diagnosis: Diagnosis report that led to this modification (dict with
+            suggestion_type, suggestion_description, issues, etc.)
+        baseline_result: Optional baseline backtest result for context
+
+    Returns:
+        Review result dict with:
+            - approved: Boolean indicating if code passes review
+            - feedback: Explanation of the decision
+            - issues: List of identified issues (empty if approved)
+
+    Example:
+        >>> diagnosis = {
+        ...     "suggestion_type": "ADD_FILTER",
+        ...     "suggestion_description": "Add trend filter to reduce losses",
+        ...     "issues": ["High drawdown", "Low win rate"]
+        ... }
+        >>> result = await run_analyst_code_review(
+        ...     code=modified_strategy_code,
+        ...     diagnosis=diagnosis,
+        ...     baseline_result=previous_backtest
+        ... )
+        >>> if result["approved"]:
+        ...     # Proceed to backtest
+        ...     pass
+        >>> else:
+        ...     # Send back to Engineer with feedback
+        ...     print(result["feedback"])
+    """
+    from .nodes import review_code_node
+
+    state = {
+        "code": code,
+        "diagnosis": diagnosis,
+        "baseline_result": baseline_result,
+    }
+
+    return await review_code_node(state)

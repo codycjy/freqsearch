@@ -268,6 +268,10 @@ func (c *Client) unsubscribe(eventTypes []string) {
 // readPump pumps messages from the websocket connection to the hub.
 func (c *Client) readPump() {
 	defer func() {
+		// Recover from any panics during read operations
+		if r := recover(); r != nil {
+			c.logger.Debug("Recovered from panic in readPump", zap.Any("panic", r))
+		}
 		c.hub.unregister <- c
 		c.conn.Close()
 	}()
@@ -327,6 +331,10 @@ func (c *Client) readPump() {
 func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
+		// Recover from any panics during write operations
+		if r := recover(); r != nil {
+			c.logger.Debug("Recovered from panic in writePump", zap.Any("panic", r))
+		}
 		ticker.Stop()
 		c.conn.Close()
 	}()

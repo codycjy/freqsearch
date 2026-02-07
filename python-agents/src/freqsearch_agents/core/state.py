@@ -127,8 +127,9 @@ class AnalystState(TypedDict):
 class SingleIterationState(TypedDict):
     """Minimal state for a single optimization iteration.
 
-    Used by the new external-loop orchestrator design where each graph
-    invocation handles exactly one iteration (no internal loops).
+    支持两种模式:
+    - "baseline": 第0次迭代，运行原始代码获取基准
+    - "improve": 第1+次迭代，Analyst-First + Pre-Backtest循环
     """
 
     # Context (loaded from DB at start)
@@ -140,12 +141,32 @@ class SingleIterationState(TypedDict):
 
     # Input for this iteration
     input_code: str  # Strategy code to process/evolve
-    input_feedback: str | None  # Analyst feedback from previous iteration
-    mode: str  # "new" or "evolve"
+    mode: str  # "baseline" | "improve"
+
+    # === Baseline 相关 ===
+    baseline_result: dict[str, Any] | None  # baseline backtest 结果
+    baseline_strategy_id: str | None  # baseline 使用的策略ID
+
+    # === Analyst-First 相关 ===
+    previous_backtest_result: dict[str, Any] | None  # 上次迭代的 backtest 结果
+    diagnosis_report: dict[str, Any] | None  # Analyst 的结构化诊断报告
+
+    # === Pre-Backtest 循环相关 ===
+    code_iteration_count: int  # 当前代码迭代次数 (内部循环)
+    max_code_iterations: int  # 最大代码迭代次数 (默认3)
+    code_review_passed: bool  # Analyst 代码审核是否通过
+    code_review_feedback: str | None  # Analyst 代码审核反馈
 
     # Best tracking (for comparison)
     best_sharpe: float
     best_strategy_id: str | None
+
+    # === 改进度量 ===
+    improvement_vs_baseline: dict[str, float] | None  # vs baseline 的改进
+    improvement_vs_previous: dict[str, float] | None  # vs 上次迭代的改进
+
+    # === 生成的代码 ===
+    generated_code: str | None  # Engineer 生成的代码
 
     # Iteration outputs
     engineer_result: dict[str, Any] | None

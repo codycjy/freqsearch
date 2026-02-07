@@ -16,6 +16,7 @@ import {
   RobotOutlined,
   SearchOutlined,
   ClockCircleOutlined,
+  FunctionOutlined,
 } from '@ant-design/icons';
 import { lazy, Suspense } from 'react';
 
@@ -40,6 +41,8 @@ const AgentShow = lazy(() => import('@resources/agents').then(m => ({ default: m
 const ScoutList = lazy(() => import('@resources/scout').then(m => ({ default: m.ScoutList })));
 const ScoutShow = lazy(() => import('@resources/scout').then(m => ({ default: m.ScoutShow })));
 const ScoutScheduleList = lazy(() => import('@resources/scout').then(m => ({ default: m.ScoutScheduleList })));
+const FactorList = lazy(() => import('@resources/factors').then(m => ({ default: m.FactorList })));
+const FactorShow = lazy(() => import('@resources/factors').then(m => ({ default: m.FactorShow })));
 
 // Loading fallback component
 const PageLoader = () => (
@@ -116,6 +119,15 @@ function App() {
                   },
                 },
                 {
+                  name: 'factors',
+                  list: '/factors',
+                  show: '/factors/show/:id',
+                  meta: {
+                    label: 'Factors',
+                    icon: <FunctionOutlined />,
+                  },
+                },
+                {
                   name: 'scout',
                   meta: {
                     label: 'Scout',
@@ -187,6 +199,12 @@ function App() {
                   <Route path="/agents">
                     <Route index element={<AgentList />} />
                     <Route path="show/:id" element={<AgentShow />} />
+                  </Route>
+
+                  {/* Factors */}
+                  <Route path="/factors">
+                    <Route index element={<FactorList />} />
+                    <Route path="show/:id" element={<FactorShow />} />
                   </Route>
 
                   {/* Scout */}

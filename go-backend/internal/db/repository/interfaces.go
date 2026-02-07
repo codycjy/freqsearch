@@ -39,6 +39,11 @@ type StrategyRepository interface {
 
 	// GetAncestors retrieves all ancestors of a strategy.
 	GetAncestors(ctx context.Context, strategyID uuid.UUID) ([]*domain.Strategy, error)
+
+	// GetStrategyHashes retrieves hash information (SHA256 and SimHash) for all strategies.
+	// Used by Python agents for dual-hash deduplication.
+	// Limit parameter controls the number of strategies to return (0 = all).
+	GetStrategyHashes(ctx context.Context, limit int) ([]domain.StrategyHash, error)
 }
 
 // BacktestJobRepository defines the interface for backtest job data access.
@@ -186,6 +191,33 @@ type ScoutRepository interface {
 	UpdateScheduleNextRun(ctx context.Context, scheduleID uuid.UUID, nextRunAt time.Time) error
 }
 
+// FactorRepository defines the interface for factor data access.
+type FactorRepository interface {
+	// Create creates a new factor.
+	Create(ctx context.Context, factor *domain.Factor) error
+
+	// GetByID retrieves a factor by ID.
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.Factor, error)
+
+	// GetByName retrieves a factor by name.
+	GetByName(ctx context.Context, name string) (*domain.Factor, error)
+
+	// Update updates an existing factor.
+	Update(ctx context.Context, factor *domain.Factor) error
+
+	// Delete deletes a factor by ID.
+	Delete(ctx context.Context, id uuid.UUID) error
+
+	// List lists factors with multi-dimensional filters and pagination.
+	List(ctx context.Context, query domain.FactorSearchQuery) ([]*domain.Factor, int, error)
+
+	// Search searches factors by keyword in description.
+	Search(ctx context.Context, keyword string, limit int) ([]*domain.Factor, error)
+
+	// GetCategoryStats retrieves statistics grouped by category.
+	GetCategoryStats(ctx context.Context) (domain.CategoryStats, error)
+}
+
 // Repositories aggregates all repository interfaces.
 type Repositories struct {
 	Strategy     StrategyRepository
@@ -193,6 +225,7 @@ type Repositories struct {
 	Result       BacktestResultRepository
 	Optimization OptimizationRepository
 	Scout        ScoutRepository
+	Factor       FactorRepository
 }
 
 // NewRepositories creates a new Repositories instance with all PostgreSQL implementations.
@@ -203,5 +236,6 @@ func NewRepositories(pool *db.Pool) *Repositories {
 		Result:       NewBacktestResultRepository(pool),
 		Optimization: NewOptimizationRepository(pool),
 		Scout:        NewScoutRepository(pool),
+		Factor:       NewFactorRepository(pool),
 	}
 }

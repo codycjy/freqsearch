@@ -53,7 +53,8 @@ type Strategy struct {
 	ID          uuid.UUID  `json:"id"`
 	Name        string     `json:"name"`
 	Code        string     `json:"code"`
-	CodeHash    string     `json:"code_hash"`
+	CodeHash    string     `json:"code_hash"`     // SHA256 hash for exact deduplication (computed by PostgreSQL)
+	SimHash     *string    `json:"simhash,omitempty"` // SimHash for similarity detection (computed by Python)
 	ParentID    *uuid.UUID `json:"parent_id,omitempty"`
 	Generation  int        `json:"generation"`
 	Description string     `json:"description,omitempty"`
@@ -97,6 +98,14 @@ func NewStrategy(name, code, description string, parentID *uuid.UUID) *Strategy 
 type StrategyWithMetrics struct {
 	Strategy   *Strategy                   `json:"strategy"`
 	BestResult *StrategyPerformanceMetrics `json:"best_result,omitempty"`
+}
+
+// StrategyHash represents hash information for a strategy.
+// Used for deduplication: SHA256 for exact matching, SimHash for similarity detection.
+type StrategyHash struct {
+	ID       uuid.UUID `json:"id"`
+	CodeHash string    `json:"code_hash"` // SHA256 hash (always present)
+	SimHash  *string   `json:"simhash,omitempty"` // SimHash (may be null for old strategies)
 }
 
 // StrategyPerformanceMetrics represents aggregated performance metrics for a strategy.

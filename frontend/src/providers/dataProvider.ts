@@ -92,10 +92,10 @@ const transformStrategyListItem = (item: any): any => {
 /**
  * Type guard to check if a resource is a known resource type
  */
-type ResourceType = "strategies" | "backtests" | "optimizations" | "backtest-results" | "scout-runs" | "scout-schedules";
+type ResourceType = "strategies" | "backtests" | "optimizations" | "backtest-results" | "scout-runs" | "scout-schedules" | "factors" | "factors/categories";
 
 const isValidResource = (resource: string): resource is ResourceType => {
-  return ["strategies", "backtests", "optimizations", "backtest-results", "scout-runs", "scout-schedules"].includes(resource);
+  return ["strategies", "backtests", "optimizations", "backtest-results", "scout-runs", "scout-schedules", "factors", "factors/categories"].includes(resource);
 };
 
 /**
@@ -110,6 +110,8 @@ const getResourceEndpoint = (resource: string): string => {
     "backtest-results": "/backtest-results",
     "scout-runs": "/agents/scout/runs",
     "scout-schedules": "/agents/scout/schedules",
+    factors: "/factors",
+    "factors/categories": "/factors/categories",
   };
 
   if (!isValidResource(resource)) {
@@ -209,6 +211,8 @@ const getListKey = (resource: string): string => {
     "backtest-results": "results",
     "scout-runs": "runs",
     "scout-schedules": "schedules",
+    factors: "factors",
+    "factors/categories": "stats",
   };
 
   return keys[resource] || resource;
@@ -277,6 +281,9 @@ export const dataProvider: DataProvider = {
     // Unwrap nested responses based on resource type
     if (resource === "strategies" && data.strategy) {
       return { data: data.strategy };
+    }
+    if (resource === "factors" && data.factor) {
+      return { data: data.factor };
     }
     if (resource === "scout-runs" && data.run) {
       return { data: data.run };

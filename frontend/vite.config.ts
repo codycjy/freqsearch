@@ -33,7 +33,26 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
-    // Temporarily disable manual chunking to debug production build issue
-    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Single vendor chunk to avoid circular dependency issues
+          vendor: [
+            'react',
+            'react-dom',
+            'react-router-dom',
+            'antd',
+            'axios',
+            'dayjs',
+          ],
+        },
+        // Optimize chunk file names
+        chunkFileNames: 'assets/[name]-[hash].js',
+        entryFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
+      },
+    },
+    // Increase chunk size warning limit to 600kb (some vendor chunks are legitimately large)
+    chunkSizeWarningLimit: 600,
   },
 });

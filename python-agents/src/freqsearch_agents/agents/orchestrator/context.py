@@ -48,6 +48,25 @@ class OptimizationContext:
     # Status
     status: str = "running"  # "pending", "running", "paused", "completed", "failed", "cancelled"
 
+    # === Baseline tracking ===
+    baseline_completed: bool = False  # baseline is completed
+    baseline_strategy_id: str | None = None  # baseline strategy ID
+    baseline_result: dict[str, Any] | None = None  # baseline backtest result
+
+    # === Previous iteration data (for Analyst-First) ===
+    previous_backtest_result: dict[str, Any] | None = None  # previous backtest result
+
+    def determine_mode(self) -> str:
+        """Determine the mode for the current iteration.
+
+        Returns:
+            "baseline" if iteration 0
+            "improve" if iteration 1+
+        """
+        if self.current_iteration == 0:
+            return "baseline"
+        return "improve"
+
     @classmethod
     async def load(
         cls,
@@ -88,6 +107,26 @@ class OptimizationContext:
         config = run.get("config", {})
         backtest_config = config.get("backtest_config", {})
 
+        # Check if baseline is completed (iteration > 0 means baseline is done)
+        baseline_completed = run.get("current_iteration", 0) > 0
+
+        # Load baseline result and previous backtest result
+        baseline_result = None
+        baseline_strategy_id = None
+        previous_backtest_result = None
+
+        if iterations:
+            # First iteration is baseline
+            if len(iterations) > 0:
+                first_iter = iterations[0]
+                if first_iter.get("iteration_number", 0) == 0:
+                    baseline_result = first_iter.get("result")
+                    baseline_strategy_id = first_iter.get("strategy_id") or run["base_strategy_id"]
+
+            # Latest iteration result as previous
+            latest = iterations[-1]
+            previous_backtest_result = latest.get("result")
+
         context = cls(
             run_id=run_id,
             base_strategy_id=run["base_strategy_id"],
@@ -100,6 +139,10 @@ class OptimizationContext:
             previous_feedback=previous_feedback,
             backtest_config=backtest_config,
             status=run.get("status", "running"),
+            baseline_completed=baseline_completed,
+            baseline_strategy_id=baseline_strategy_id,
+            baseline_result=baseline_result,
+            previous_backtest_result=previous_backtest_result,
         )
 
         logger.info(
@@ -118,6 +161,8 @@ class OptimizationContext:
         Returns:
             SingleIterationState ready for graph invocation
         """
+        mode = self.determine_mode()
+
         return SingleIterationState(
             # Context
             optimization_run_id=self.run_id,
@@ -127,13 +172,24 @@ class OptimizationContext:
             backtest_config=self.backtest_config,
             # Input
             input_code=self.current_code,
-            input_feedback=self.previous_feedback,
-            mode="new" if self.current_iteration == 0 else "evolve",
+            mode=mode,
+            # Baseline related
+            baseline_result=self.baseline_result,
+            baseline_strategy_id=self.baseline_strategy_id,
+            # Analyst-First related
+            previous_backtest_result=self.previous_backtest_result,
+            diagnosis_report=None,
+            # Pre-Backtest loop
+            code_iteration_count=0,
+            max_code_iterations=3,
+            code_review_passed=False,
+            code_review_feedback=None,
             # Best tracking
             best_sharpe=self.best_sharpe,
             best_strategy_id=self.best_strategy_id,
             # Outputs (initialized)
             engineer_result=None,
+            generated_code=None,
             generated_strategy_id=None,
             backtest_job_id=None,
             backtest_result=None,
@@ -142,6 +198,9 @@ class OptimizationContext:
             # Validation
             validation_passed=False,
             validation_retry_count=0,
+            # Improvements
+            improvement_vs_baseline=None,
+            improvement_vs_previous=None,
             # Control
             should_terminate=False,
             termination_reason=None,
@@ -164,30 +223,52 @@ class OptimizationContext:
             "Saving iteration result",
             run_id=self.run_id,
             iteration=self.current_iteration,
+            mode=result.get("mode"),
             is_new_best=result.get("is_new_best", False),
         )
 
-        # Update best if this iteration found a better strategy
+        # Handle baseline iteration
+        if result.get("mode") == "baseline":
+            self.baseline_completed = True
+            self.baseline_strategy_id = result.get("baseline_strategy_id") or self.base_strategy_id
+            self.baseline_result = result.get("backtest_result")
+            # Save backtest result for next iteration
+            self.previous_backtest_result = result.get("backtest_result")
+            # After baseline completes, current_iteration becomes 1
+            self.current_iteration = 1
+            logger.info(
+                "Baseline completed",
+                run_id=self.run_id,
+                baseline_strategy_id=self.baseline_strategy_id,
+            )
+            return
+
+        # Handle improve iteration
+        # Save previous backtest result
+        self.previous_backtest_result = result.get("backtest_result")
+
+        # Update best
         if result.get("is_new_best") and result.get("generated_strategy_id"):
             self.best_strategy_id = result["generated_strategy_id"]
             self.best_sharpe = result.get("new_best_sharpe", self.best_sharpe)
 
-        # Update current strategy for next iteration
+        # Update current strategy
         if result.get("generated_strategy_id"):
             self.current_strategy_id = result["generated_strategy_id"]
-
-        # Store feedback for next iteration
-        if result.get("analyst_feedback"):
-            self.previous_feedback = result["analyst_feedback"]
+            # Get new code
+            try:
+                strategy_data = await client.get_strategy(self.current_strategy_id)
+                self.current_code = strategy_data.get("strategy", {}).get("code", "")
+            except Exception as e:
+                logger.warning("Failed to get strategy code", error=str(e))
 
         # Increment iteration
         self.current_iteration += 1
 
-        # Note: The backend tracks iteration via the iteration table
-        # We just need to control the run status appropriately
+        # Handle termination
         if result.get("should_terminate"):
             reason = result.get("termination_reason", "unknown")
-            if reason == "approved":
+            if reason in ("approved", "archived"):
                 try:
                     await client.control_optimization(
                         self.run_id,
@@ -195,52 +276,15 @@ class OptimizationContext:
                         termination_reason=reason,
                         best_strategy_id=self.best_strategy_id,
                     )
-                    # ISSUE #1 FIX: Sync local status after successful update
                     self.status = "completed"
-                    logger.info(
-                        "Optimization marked as completed",
-                        run_id=self.run_id,
-                        reason=reason,
-                    )
                 except Exception as e:
-                    logger.error(
-                        "Failed to complete optimization",
-                        run_id=self.run_id,
-                        action="complete",
-                        reason=reason,
-                        error=str(e),
-                    )
+                    logger.error("Failed to complete optimization", error=str(e))
                     raise
-            elif reason in ("archived", "validation_failed"):
-                try:
-                    await client.control_optimization(
-                        self.run_id,
-                        "fail",
-                        termination_reason=reason,
-                    )
-                    # ISSUE #1 FIX: Sync local status after successful update
-                    self.status = "failed"
-                    logger.info(
-                        "Optimization marked as failed",
-                        run_id=self.run_id,
-                        reason=reason,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Failed to fail optimization",
-                        run_id=self.run_id,
-                        action="fail",
-                        reason=reason,
-                        error=str(e),
-                    )
-                    raise
-            # max_iterations is handled by the runner
 
         logger.info(
             "Iteration result saved",
             run_id=self.run_id,
             new_iteration=self.current_iteration,
-            best_sharpe=self.best_sharpe,
         )
 
     def is_complete(self) -> bool:
