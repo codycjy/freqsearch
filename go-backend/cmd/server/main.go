@@ -97,13 +97,41 @@ func run(ctx context.Context, cfg *config.Config, logger *zap.Logger) error {
 	// 2. Initialize repositories
 	repos := repository.NewRepositories(pool)
 
-	// 3. Initialize Docker manager
-	logger.Info("Initializing Docker manager...")
-	dockerManager, err := docker.NewDockerManager(&cfg.GoBackend.Docker, logger)
-	if err != nil {
-		return fmt.Errorf("failed to initialize Docker manager: %w", err)
+	// 3. Initialize container manager (Docker / ACI / Hybrid)
+	logger.Info("Initializing container manager...",
+		zap.String("backend", cfg.GoBackend.ContainerBackend),
+	)
+	var dockerManager docker.Manager
+	switch cfg.GoBackend.ContainerBackend {
+	case "aci":
+		dockerManager, err = docker.NewACIManager(&cfg.GoBackend.ACI, logger)
+		if err != nil {
+			return fmt.Errorf("failed to initialize ACI manager: %w", err)
+		}
+	case "hybrid":
+		localMgr, localErr := docker.NewDockerManager(&cfg.GoBackend.Docker, logger)
+		if localErr != nil {
+			return fmt.Errorf("failed to initialize local Docker manager: %w", localErr)
+		}
+		aciMgr, aciErr := docker.NewACIManager(&cfg.GoBackend.ACI, logger)
+		if aciErr != nil {
+			return fmt.Errorf("failed to initialize ACI manager for hybrid mode: %w", aciErr)
+		}
+		dockerManager = docker.NewHybridManager(
+			localMgr,
+			aciMgr,
+			cfg.GoBackend.Scheduler.MaxConcurrentBacktests,
+			logger,
+		)
+	default: // "docker" or empty
+		dockerManager, err = docker.NewDockerManager(&cfg.GoBackend.Docker, logger)
+		if err != nil {
+			return fmt.Errorf("failed to initialize Docker manager: %w", err)
+		}
 	}
-	logger.Info("Docker manager initialized")
+	logger.Info("Container manager initialized",
+		zap.String("backend", cfg.GoBackend.ContainerBackend),
+	)
 
 	// 4. Initialize event publisher (RabbitMQ)
 	var eventPublisher events.Publisher

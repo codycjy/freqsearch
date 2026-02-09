@@ -510,6 +510,8 @@ func (s *Server) startEventSubscription() {
 		events.RoutingKeyTaskFailed,
 		events.RoutingKeyTaskCancelled,
 		events.RoutingKeyOptIteration,
+		events.RoutingKeyOptFailed,
+		events.RoutingKeyOptCompleted,
 		events.RoutingKeyBacktestCompleted,
 		events.RoutingKeyBacktestFailed,
 		events.RoutingKeyStrategyDiscovered,
@@ -556,6 +558,13 @@ func (s *Server) handleRabbitMQEvent(routingKey string, body []byte) error {
 			zap.String("routing_key", routingKey),
 			zap.Error(err))
 		// Continue to broadcast even if database update fails
+	}
+
+	// Handle optimization lifecycle events - update database
+	if err := s.handleOptimizationEvent(routingKey, body); err != nil {
+		s.logger.Error("Failed to handle optimization event",
+			zap.String("routing_key", routingKey),
+			zap.Error(err))
 	}
 
 	// Map RabbitMQ routing key to WebSocket event type
@@ -661,6 +670,81 @@ func (s *Server) handleScoutEvent(routingKey string, body []byte) error {
 			zap.String("name", strategy.Name),
 			zap.String("source", event.SourceType),
 			zap.String("code_hash", strategy.CodeHash))
+	}
+
+	return nil
+}
+
+// handleOptimizationEvent processes optimization lifecycle events and updates the database.
+func (s *Server) handleOptimizationEvent(routingKey string, body []byte) error {
+	ctx := context.Background()
+
+	switch routingKey {
+	case events.RoutingKeyOptFailed:
+		// Parse the event - support both Go-published and Python-published formats
+		var raw map[string]interface{}
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return fmt.Errorf("unmarshal optimization failed: %w", err)
+		}
+
+		// Get run_id (Python sends both "run_id" and "optimization_run_id")
+		runIDStr := ""
+		if v, ok := raw["run_id"].(string); ok && v != "" {
+			runIDStr = v
+		} else if v, ok := raw["optimization_run_id"].(string); ok && v != "" {
+			runIDStr = v
+		}
+		if runIDStr == "" {
+			return fmt.Errorf("optimization.failed event missing run_id")
+		}
+
+		runID, err := uuid.Parse(runIDStr)
+		if err != nil {
+			return fmt.Errorf("invalid run_id %q: %w", runIDStr, err)
+		}
+
+		errorMsg := "unknown error"
+		if v, ok := raw["error_message"].(string); ok && v != "" {
+			errorMsg = v
+		}
+
+		s.logger.Error("Optimization run failed",
+			zap.String("run_id", runID.String()),
+			zap.String("error", errorMsg))
+
+		return s.handler.repos.Optimization.Fail(ctx, runID, errorMsg)
+
+	case events.RoutingKeyOptCompleted:
+		var raw map[string]interface{}
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return fmt.Errorf("unmarshal optimization completed: %w", err)
+		}
+
+		runIDStr := ""
+		if v, ok := raw["run_id"].(string); ok && v != "" {
+			runIDStr = v
+		} else if v, ok := raw["optimization_run_id"].(string); ok && v != "" {
+			runIDStr = v
+		}
+		if runIDStr == "" {
+			return fmt.Errorf("optimization.completed event missing run_id")
+		}
+
+		runID, err := uuid.Parse(runIDStr)
+		if err != nil {
+			return fmt.Errorf("invalid run_id %q: %w", runIDStr, err)
+		}
+
+		reason := "completed"
+		if v, ok := raw["termination_reason"].(string); ok && v != "" {
+			reason = v
+		}
+
+		s.logger.Info("Optimization run completed",
+			zap.String("run_id", runID.String()),
+			zap.String("reason", reason))
+
+		return s.handler.repos.Optimization.Complete(ctx, runID, reason, nil, nil)
 	}
 
 	return nil

@@ -12,12 +12,14 @@ type Config struct {
 
 // GoBackendConfig contains all backend service configurations.
 type GoBackendConfig struct {
-	GRPCPort  int             `yaml:"grpc_port"`
-	HTTPPort  int             `yaml:"http_port"`
-	Database  DatabaseConfig  `yaml:"database"`
-	RabbitMQ  RabbitMQConfig  `yaml:"rabbitmq"`
-	Scheduler SchedulerConfig `yaml:"scheduler"`
-	Docker    DockerConfig    `yaml:"docker"`
+	GRPCPort         int             `yaml:"grpc_port"`
+	HTTPPort         int             `yaml:"http_port"`
+	Database         DatabaseConfig  `yaml:"database"`
+	RabbitMQ         RabbitMQConfig  `yaml:"rabbitmq"`
+	Scheduler        SchedulerConfig `yaml:"scheduler"`
+	Docker           DockerConfig    `yaml:"docker"`
+	ContainerBackend string          `yaml:"container_backend"` // "docker" | "aci" | "hybrid"
+	ACI              ACIConfig       `yaml:"aci"`
 }
 
 // DatabaseConfig contains PostgreSQL connection settings.
@@ -80,6 +82,48 @@ type DockerConfig struct {
 	ContainerTimeout string `yaml:"container_timeout"`
 }
 
+// ACIConfig contains Azure Container Instances settings.
+type ACIConfig struct {
+	SubscriptionID     string  `yaml:"subscription_id"`
+	ResourceGroup      string  `yaml:"resource_group"`
+	Location           string  `yaml:"location"`
+	Image              string  `yaml:"image"`
+	RegistryServer     string  `yaml:"registry_server"`
+	RegistryUsername   string  `yaml:"registry_username"`
+	RegistryPassword   string  `yaml:"registry_password"`
+	ManagedIdentityID  string  `yaml:"managed_identity_id"`
+	CPUCores           float64 `yaml:"cpu_cores"`
+	MemoryGB           float64 `yaml:"memory_gb"`
+	StorageAccountName string  `yaml:"storage_account_name"`
+	StorageAccountKey  string  `yaml:"storage_account_key"`
+	FileShareName      string  `yaml:"file_share_name"`
+	BaseConfigPath     string  `yaml:"base_config_path"`
+	ContainerTimeout   string  `yaml:"container_timeout"`
+	PollInterval       string  `yaml:"poll_interval"`
+	AuthMethod         string  `yaml:"auth_method"`
+	TenantID           string  `yaml:"tenant_id"`
+	ClientID           string  `yaml:"client_id"`
+	ClientSecret       string  `yaml:"client_secret"`
+}
+
+// GetContainerTimeout returns the container timeout as a time.Duration.
+func (a *ACIConfig) GetContainerTimeout() time.Duration {
+	d, err := time.ParseDuration(a.ContainerTimeout)
+	if err != nil {
+		return 15 * time.Minute
+	}
+	return d
+}
+
+// GetPollInterval returns the poll interval as a time.Duration.
+func (a *ACIConfig) GetPollInterval() time.Duration {
+	d, err := time.ParseDuration(a.PollInterval)
+	if err != nil {
+		return 5 * time.Second
+	}
+	return d
+}
+
 // LoggingConfig contains logging settings.
 type LoggingConfig struct {
 	Level      string `yaml:"level"`
@@ -129,6 +173,14 @@ func Default() *Config {
 				MemoryLimit:      "2g",
 				BaseConfigPath:   "configs/freqtrade/base_config.json",
 				ContainerTimeout: "15m",
+			},
+			ContainerBackend: "docker",
+			ACI: ACIConfig{
+				CPUCores:         2.0,
+				MemoryGB:         2.0,
+				ContainerTimeout: "15m",
+				PollInterval:     "5s",
+				AuthMethod:       "default",
 			},
 		},
 		Logging: LoggingConfig{

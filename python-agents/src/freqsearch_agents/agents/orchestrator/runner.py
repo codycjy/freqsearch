@@ -16,6 +16,7 @@ import structlog
 
 from ...core.messaging import Events, publish_event
 from ...grpc_client.client import FreqSearchClient
+from ...grpc_client.retry import with_retry
 from .context import OptimizationContext
 from .graph import create_single_iteration_graph
 
@@ -46,6 +47,24 @@ class OrchestratorRunner:
             grpc_address: gRPC server address
         """
         self.grpc_address = grpc_address
+
+    @staticmethod
+    @with_retry(max_retries=5, base_delay=2.0)
+    async def _control_optimization_with_retry(
+        client: FreqSearchClient,
+        run_id: str,
+        action: str,
+        **kwargs,
+    ) -> None:
+        """Control optimization with retry logic.
+
+        Args:
+            client: gRPC client
+            run_id: Optimization run ID
+            action: Control action
+            **kwargs: Additional arguments for control_optimization
+        """
+        await client.control_optimization(run_id, action, **kwargs)
 
     async def run_optimization(
         self,
@@ -86,7 +105,7 @@ class OrchestratorRunner:
                 return self._build_result(context, "already_complete")
 
             # Set to running
-            await client.control_optimization(run_id, "resume")
+            await self._control_optimization_with_retry(client, run_id, "resume")
 
             # ========== Phase 1: Baseline ==========
             if not context.baseline_completed:
@@ -137,7 +156,9 @@ class OrchestratorRunner:
                 except Exception as e:
                     logger.exception("Baseline iteration failed", error=str(e))
                     try:
-                        await client.control_optimization(run_id, "fail", termination_reason=str(e))
+                        await self._control_optimization_with_retry(
+                            client, run_id, "fail", termination_reason=str(e)
+                        )
                     except Exception:
                         pass
                     return self._build_result(context, "exception", error=str(e))
@@ -227,7 +248,9 @@ class OrchestratorRunner:
                         error=str(e),
                     )
                     try:
-                        await client.control_optimization(run_id, "fail", termination_reason=str(e))
+                        await self._control_optimization_with_retry(
+                            client, run_id, "fail", termination_reason=str(e)
+                        )
                     except Exception:
                         pass
                     return self._build_result(context, "exception", error=str(e))
@@ -236,7 +259,8 @@ class OrchestratorRunner:
             if context.status not in ("cancelled", "paused", "completed", "failed"):
                 logger.info("Max iterations reached", run_id=run_id, max_iterations=max_iterations)
                 try:
-                    await client.control_optimization(
+                    await self._control_optimization_with_retry(
+                        client,
                         run_id,
                         "complete",
                         termination_reason="max_iterations",

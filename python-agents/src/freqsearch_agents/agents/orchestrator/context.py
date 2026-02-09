@@ -9,8 +9,9 @@ from typing import Any
 
 import structlog
 
-from ...grpc_client.client import FreqSearchClient
 from ...core.state import SingleIterationState
+from ...grpc_client.client import FreqSearchClient
+from ...grpc_client.retry import with_retry
 
 logger = structlog.get_logger(__name__)
 
@@ -68,6 +69,7 @@ class OptimizationContext:
         return "improve"
 
     @classmethod
+    @with_retry(max_retries=5, base_delay=2.0)
     async def load(
         cls,
         client: FreqSearchClient,
@@ -84,7 +86,7 @@ class OptimizationContext:
         """
         logger.info("Loading optimization context", run_id=run_id)
 
-        # Get optimization run with iterations
+        # Get optimization run with iterations (with retry)
         run_data = await client.get_optimization_run(run_id)
         run = run_data["run"]
         iterations = run_data.get("iterations", [])
@@ -92,7 +94,7 @@ class OptimizationContext:
         # Determine current strategy and code
         current_strategy_id = run.get("best_strategy_id") or run["base_strategy_id"]
 
-        # Get code from current strategy
+        # Get code from current strategy (with retry)
         strategy_data = await client.get_strategy(current_strategy_id)
         current_code = strategy_data.get("strategy", {}).get("code", "")
 
@@ -208,6 +210,7 @@ class OptimizationContext:
             new_best_sharpe=None,
         )
 
+    @with_retry(max_retries=5, base_delay=2.0)
     async def save_iteration_result(
         self,
         client: FreqSearchClient,
@@ -255,7 +258,7 @@ class OptimizationContext:
         # Update current strategy
         if result.get("generated_strategy_id"):
             self.current_strategy_id = result["generated_strategy_id"]
-            # Get new code
+            # Get new code (with retry handled by decorator on parent method)
             try:
                 strategy_data = await client.get_strategy(self.current_strategy_id)
                 self.current_code = strategy_data.get("strategy", {}).get("code", "")
@@ -265,7 +268,7 @@ class OptimizationContext:
         # Increment iteration
         self.current_iteration += 1
 
-        # Handle termination
+        # Handle termination (with retry handled by decorator on parent method)
         if result.get("should_terminate"):
             reason = result.get("termination_reason", "unknown")
             if reason in ("approved", "archived"):

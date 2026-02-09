@@ -1,35 +1,92 @@
-"""LangChain tools for Factor library access."""
+"""LangChain tools for Factor library access.
 
-import asyncio
+Uses synchronous HTTP client to avoid asyncio nesting issues
+when called from LangChain tool handlers running in async context.
+"""
+
 import json
+from typing import Any
 
+import httpx
 import structlog
-from langchain_core.tools import tool
 
-from .client import FactorClient
+from ..config import get_settings
 
 logger = structlog.get_logger(__name__)
 
 
-def _run_async(coro):
-    """Run async coroutine in sync context.
+class SyncFactorClient:
+    """Synchronous HTTP client for Factor API.
 
-    Handles both new and existing event loops.
+    Used by LangChain tools to avoid asyncio nesting issues.
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Running in async context - create new task
-            return loop.run_until_complete(coro)
-        else:
-            # No running loop - use run
-            return loop.run_until_complete(coro)
-    except RuntimeError:
-        # No event loop - create new one
-        return asyncio.run(coro)
+
+    def __init__(self):
+        settings = get_settings()
+        self._base_url = settings.factor.api_url
+        self._timeout = float(settings.factor.timeout_seconds)
+
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute synchronous HTTP request."""
+        with httpx.Client(
+            base_url=self._base_url,
+            timeout=self._timeout,
+            headers={"Content-Type": "application/json"},
+        ) as client:
+            response = client.request(method=method, url=endpoint, params=params)
+            response.raise_for_status()
+            return response.json()
+
+    def search(
+        self,
+        category: str | None = None,
+        signal_type: str | None = None,
+        holding_period: str | None = None,
+        data_requirement: str | None = None,
+        market_regime: str | None = None,
+        keyword: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search factors with filters."""
+        params = {"limit": limit, "offset": 0}
+        if category:
+            params["category"] = category
+        if signal_type:
+            params["signal_type"] = signal_type
+        if holding_period:
+            params["holding_period"] = holding_period
+        if data_requirement:
+            params["data_requirement"] = data_requirement
+        if market_regime:
+            params["market_regime"] = market_regime
+        if keyword:
+            params["q"] = keyword
+
+        response = self._request("GET", "/factors", params=params)
+        return response.get("factors", [])
+
+    def get_by_name(self, name: str) -> dict[str, Any] | None:
+        """Get factor by name."""
+        try:
+            response = self._request("GET", f"/factors/name/{name}")
+            return response.get("factor")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
+    def get_category_stats(self) -> dict[str, int]:
+        """Get count of factors per category."""
+        response = self._request("GET", "/factors/categories")
+        return response.get("stats", {})
 
 
-async def _async_search_factors(
+def _search_factors_sync(
     category: str | None = None,
     signal_type: str | None = None,
     holding_period: str | None = None,
@@ -38,50 +95,50 @@ async def _async_search_factors(
     keyword: str | None = None,
     limit: int = 5,
 ) -> str:
-    """Internal async implementation of search_factors."""
-    async with FactorClient() as client:
-        factors = await client.search(
-            category=category,
-            signal_type=signal_type,
-            holding_period=holding_period,
-            data_requirement=data_requirement,
-            market_regime=market_regime,
-            keyword=keyword,
-            limit=limit,
-        )
+    """Synchronous implementation of search_factors."""
+    client = SyncFactorClient()
+    factors = client.search(
+        category=category,
+        signal_type=signal_type,
+        holding_period=holding_period,
+        data_requirement=data_requirement,
+        market_regime=market_regime,
+        keyword=keyword,
+        limit=limit,
+    )
 
-        if not factors:
-            return "未找到符合条件的因子。请尝试调整搜索条件。"
+    if not factors:
+        return "未找到符合条件的因子。请尝试调整搜索条件。"
 
-        # Format concise results for LLM
-        result = []
-        for f in factors:
-            # Truncate long expressions
-            expr = f.get("expression", "")
-            if len(expr) > 80:
-                expr = expr[:77] + "..."
+    # Format concise results for LLM
+    result = []
+    for f in factors:
+        # Truncate long expressions
+        expr = f.get("expression", "")
+        if len(expr) > 80:
+            expr = expr[:77] + "..."
 
-            result.append({
-                "name": f.get("name"),
-                "category": f.get("category"),
-                "holding_period": f.get("holding_period"),
-                "description": f.get("description", "")[:150],  # Truncate description
-                "expression": expr,
-            })
+        result.append({
+            "name": f.get("name"),
+            "category": f.get("category"),
+            "holding_period": f.get("holding_period"),
+            "description": f.get("description", "")[:150],
+            "expression": expr,
+        })
 
-        return json.dumps(result, ensure_ascii=False, indent=2)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-async def _async_get_factor_code(factor_name: str) -> str:
-    """Internal async implementation of get_factor_code."""
-    async with FactorClient() as client:
-        factor = await client.get_by_name(factor_name)
+def _get_factor_code_sync(factor_name: str) -> str:
+    """Synchronous implementation of get_factor_code."""
+    client = SyncFactorClient()
+    factor = client.get_by_name(factor_name)
 
-        if not factor:
-            return f"因子 '{factor_name}' 不存在。请使用 search_factors 工具查找可用因子。"
+    if not factor:
+        return f"因子 '{factor_name}' 不存在。请使用 search_factors 工具查找可用因子。"
 
-        # Format complete factor information
-        output = f"""## {factor.get('name', '').upper()}
+    # Format complete factor information
+    output = f"""## {factor.get('name', '').upper()}
 
 **描述**: {factor.get('description', 'N/A')}
 **类别**: {factor.get('category', 'N/A')} | **持仓期**: {factor.get('holding_period', 'N/A')}
@@ -105,30 +162,33 @@ dataframe.loc[
 ] = 1
 ```
 """
-        return output
+    return output
 
 
-async def _async_list_factor_categories() -> str:
-    """Internal async implementation of list_factor_categories."""
-    async with FactorClient() as client:
-        stats = await client.get_category_stats()
+def _list_factor_categories_sync() -> str:
+    """Synchronous implementation of list_factor_categories."""
+    client = SyncFactorClient()
+    stats = client.get_category_stats()
 
-        if not stats:
-            return "因子库为空或无法获取分类统计。"
+    if not stats:
+        return "因子库为空或无法获取分类统计。"
 
-        # Format category statistics
-        output = "# 因子库分类统计\n\n"
-        total = sum(stats.values())
-        output += f"**总计**: {total} 个因子\n\n"
+    # Format category statistics
+    output = "# 因子库分类统计\n\n"
+    total = sum(stats.values())
+    output += f"**总计**: {total} 个因子\n\n"
 
-        # Sort by count (descending)
-        sorted_stats = sorted(stats.items(), key=lambda x: x[1], reverse=True)
+    # Sort by count (descending)
+    sorted_stats = sorted(stats.items(), key=lambda x: x[1], reverse=True)
 
-        for category, count in sorted_stats:
-            percentage = (count / total * 100) if total > 0 else 0
-            output += f"- **{category}**: {count} 个 ({percentage:.1f}%)\n"
+    for category, count in sorted_stats:
+        percentage = (count / total * 100) if total > 0 else 0
+        output += f"- **{category}**: {count} 个 ({percentage:.1f}%)\n"
 
-        return output
+    return output
+
+
+from langchain_core.tools import tool
 
 
 @tool
@@ -191,16 +251,14 @@ def search_factors(
         search_factors(keyword="价量背离")
     """
     try:
-        return _run_async(
-            _async_search_factors(
-                category=category,
-                signal_type=signal_type,
-                holding_period=holding_period,
-                data_requirement=data_requirement,
-                market_regime=market_regime,
-                keyword=keyword,
-                limit=limit,
-            )
+        return _search_factors_sync(
+            category=category,
+            signal_type=signal_type,
+            holding_period=holding_period,
+            data_requirement=data_requirement,
+            market_regime=market_regime,
+            keyword=keyword,
+            limit=limit,
         )
     except Exception as e:
         logger.error("Error searching factors", error=str(e))
@@ -228,7 +286,7 @@ def get_factor_code(factor_name: str) -> str:
         get_factor_code("alpha_001")
     """
     try:
-        return _run_async(_async_get_factor_code(factor_name))
+        return _get_factor_code_sync(factor_name)
     except Exception as e:
         logger.error("Error getting factor code", factor_name=factor_name, error=str(e))
         return f"获取因子代码时出错: {str(e)}"
@@ -248,7 +306,7 @@ def list_factor_categories() -> str:
         list_factor_categories()
     """
     try:
-        return _run_async(_async_list_factor_categories())
+        return _list_factor_categories_sync()
     except Exception as e:
         logger.error("Error listing factor categories", error=str(e))
         return f"获取因子分类统计时出错: {str(e)}"

@@ -217,6 +217,7 @@ __marimo__/
 *.key
 credentials.json
 secrets.yaml
+configs/aci.yaml
 
 # Go
 go-backend/bin/

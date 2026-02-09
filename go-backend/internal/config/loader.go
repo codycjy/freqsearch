@@ -140,6 +140,55 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.GoBackend.Docker.BaseConfigPath = v
 	}
 
+	// Container Backend
+	if v := os.Getenv("CONTAINER_BACKEND"); v != "" {
+		cfg.GoBackend.ContainerBackend = v
+	}
+
+	// ACI
+	if v := os.Getenv("ACI_SUBSCRIPTION_ID"); v != "" {
+		cfg.GoBackend.ACI.SubscriptionID = v
+	}
+	if v := os.Getenv("ACI_RESOURCE_GROUP"); v != "" {
+		cfg.GoBackend.ACI.ResourceGroup = v
+	}
+	if v := os.Getenv("ACI_LOCATION"); v != "" {
+		cfg.GoBackend.ACI.Location = v
+	}
+	if v := os.Getenv("ACI_IMAGE"); v != "" {
+		cfg.GoBackend.ACI.Image = v
+	}
+	if v := os.Getenv("ACI_REGISTRY_SERVER"); v != "" {
+		cfg.GoBackend.ACI.RegistryServer = v
+	}
+	if v := os.Getenv("ACI_REGISTRY_USERNAME"); v != "" {
+		cfg.GoBackend.ACI.RegistryUsername = v
+	}
+	if v := os.Getenv("ACI_REGISTRY_PASSWORD"); v != "" {
+		cfg.GoBackend.ACI.RegistryPassword = v
+	}
+	if v := os.Getenv("ACI_STORAGE_ACCOUNT_NAME"); v != "" {
+		cfg.GoBackend.ACI.StorageAccountName = v
+	}
+	if v := os.Getenv("ACI_STORAGE_ACCOUNT_KEY"); v != "" {
+		cfg.GoBackend.ACI.StorageAccountKey = v
+	}
+	if v := os.Getenv("ACI_FILE_SHARE_NAME"); v != "" {
+		cfg.GoBackend.ACI.FileShareName = v
+	}
+	if v := os.Getenv("ACI_AUTH_METHOD"); v != "" {
+		cfg.GoBackend.ACI.AuthMethod = v
+	}
+	if v := os.Getenv("ACI_TENANT_ID"); v != "" {
+		cfg.GoBackend.ACI.TenantID = v
+	}
+	if v := os.Getenv("ACI_CLIENT_ID"); v != "" {
+		cfg.GoBackend.ACI.ClientID = v
+	}
+	if v := os.Getenv("ACI_CLIENT_SECRET"); v != "" {
+		cfg.GoBackend.ACI.ClientSecret = v
+	}
+
 	// Logging
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Logging.Level = strings.ToLower(v)

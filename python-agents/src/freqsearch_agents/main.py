@@ -340,6 +340,36 @@ def serve(
             except Exception as e:
                 console.print(f"[red]Orchestrator error: {e}[/red]")
                 logger.exception("Orchestrator failed")
+                run_id = data.get("optimization_run_id")
+                # Publish failure event to MQ so Go backend can update status and frontend gets notified
+                # Publish failure event to MQ so Go backend can update status
+                # and frontend gets notified via WebSocket
+                try:
+                    await publish_event(
+                        Events.OPTIMIZATION_FAILED,
+                        {
+                            "run_id": run_id,
+                            "optimization_run_id": run_id,  # compat with Python consumers
+                            "error_message": str(e),
+                            "error_type": type(e).__name__,
+                            "recoverable": True,
+                        },
+                    )
+                    logger.info("Published optimization.failed event", run_id=run_id)
+                except Exception as pub_err:
+                    logger.error("Failed to publish optimization.failed event", error=str(pub_err))
+
+                # Also try to mark failed via gRPC as a fallback
+                try:
+                    from freqsearch_agents.grpc_client import FreqSearchClient
+                    async with FreqSearchClient() as client:
+                        await client.control_optimization(run_id, "fail", termination_reason=str(e))
+                    logger.info("Marked optimization as failed via gRPC", run_id=run_id)
+                except Exception as grpc_err:
+                    logger.warning(
+                        "Could not mark optimization failed via gRPC (backend may be down)",
+                        error=str(grpc_err),
+                    )
             finally:
                 agent_tasks["orchestrator"] = None
 

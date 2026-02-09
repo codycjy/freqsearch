@@ -71,6 +71,15 @@ class GRPCSettings(BaseSettings):
     timeout_seconds: int = 30
 
 
+class FactorSettings(BaseSettings):
+    """Factor API configuration."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    api_url: str = Field("http://localhost:8083/api/v1", alias="FACTOR_API_URL")
+    timeout_seconds: int = 30
+
+
 class ScoutSettings(BaseSettings):
     """Scout Agent configuration."""
 
@@ -116,6 +125,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     rabbitmq: RabbitMQSettings = Field(default_factory=RabbitMQSettings)
     grpc: GRPCSettings = Field(default_factory=GRPCSettings)
+    factor: FactorSettings = Field(default_factory=FactorSettings)
     scout: ScoutSettings = Field(default_factory=ScoutSettings)
     engineer: EngineerSettings = Field(default_factory=EngineerSettings)
     analyst: AnalystSettings = Field(default_factory=AnalystSettings)
