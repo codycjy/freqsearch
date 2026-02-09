@@ -1,6 +1,6 @@
 import { Show } from "@refinedev/antd";
 import { useShow } from "@refinedev/core";
-import { Typography, Tag, Descriptions, Card, Row, Col, Divider } from "antd";
+import { Typography, Tag, Descriptions, Card, Row, Col } from "antd";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 

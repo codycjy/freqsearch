@@ -1,0 +1,103 @@
+# FreqSearch ACI (Azure Container Instances) Configuration
+# Copy to configs/aci.yaml and fill in your Azure credentials
+#
+# Usage:
+#   ./freqsearch-backend -config configs/aci.yaml
+#
+# container_backend options:
+#   "docker"  - Local Docker only (default)
+#   "aci"     - Azure Container Instances only
+#   "hybrid"  - Local Docker + ACI overflow
+
+env: production
+
+go_backend:
+  grpc_port: 50051
+  http_port: 8083
+
+  # Container backend: "docker" | "aci" | "hybrid"
+  container_backend: hybrid
+
+  # PostgreSQL
+  database:
+    host: localhost
+    port: 5432
+    user: postgres
+    password: postgres
+    name: freqsearch
+    sslmode: disable
+    max_connections: 25
+    max_idle_connections: 5
+
+  # RabbitMQ
+  rabbitmq:
+    url: amqp://guest:guest@localhost:5672/
+    exchange: freqsearch.events
+    prefetch_count: 10
+
+  # Scheduler
+  scheduler:
+    max_concurrent_backtests: 8   # Local Docker slots (hybrid: overflow goes to ACI)
+    poll_interval_seconds: 1
+    job_timeout_minutes: 15
+    max_retries: 1
+
+  # Local Docker (used in "docker" and "hybrid" modes)
+  docker:
+    image: freqtradeorg/freqtrade:2025.4_freqai
+    network: freqsearch_network
+    data_mount: ./data/market
+    strategy_mount: ./data/strategies
+    config_mount: /tmp/freqsearch/configs
+    cpu_limit: "2.0"
+    memory_limit: 2g
+    base_config_path: configs/freqtrade/base_config.json
+    container_timeout: 15m
+
+  # Azure Container Instances (used in "aci" and "hybrid" modes)
+  aci:
+    # Azure subscription & resource group
+    subscription_id: "YOUR_SUBSCRIPTION_ID"
+    resource_group: "freqsearch-rg"
+    location: "eastus"
+
+    # Container image (from ACR or Docker Hub)
+    image: "freqtradeorg/freqtrade:2025.4_freqai"
+    # For ACR: image: "myregistry.azurecr.io/freqtrade:latest"
+
+    # ACR credentials (leave empty for Docker Hub public images)
+    registry_server: ""
+    registry_username: ""
+    registry_password: ""
+
+    # Container resources
+    cpu_cores: 2.0
+    memory_gb: 2.0
+
+    # Azure Files share for market data
+    # Create with: az storage share create --name freqsearch-data --account-name <account>
+    storage_account_name: "YOUR_STORAGE_ACCOUNT"
+    storage_account_key: "YOUR_STORAGE_KEY"
+    file_share_name: "freqsearch-data"
+
+    # Freqtrade base config path (on Azure Files share)
+    base_config_path: configs/freqtrade/base_config.json
+
+    # Timeouts
+    container_timeout: 15m
+    poll_interval: 5s
+
+    # Authentication method: "default" | "service_principal" | "managed_identity"
+    auth_method: default
+
+    # Service Principal credentials (when auth_method: service_principal)
+    tenant_id: ""
+    client_id: ""
+    client_secret: ""
+
+    # Managed Identity (when auth_method: managed_identity)
+    managed_identity_id: ""
+
+logging:
+  level: info
+  format: json

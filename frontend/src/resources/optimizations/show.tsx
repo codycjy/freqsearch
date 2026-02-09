@@ -324,7 +324,7 @@ export const OptimizationShow = () => {
                 {record.config.backtest_config.exchange}
               </Descriptions.Item>
               <Descriptions.Item label="Trading Pairs">
-                {record.config.backtest_config.pairs.join(', ')}
+                {(record.config.backtest_config.pairs || []).join(', ')}
               </Descriptions.Item>
               <Descriptions.Item label="Timeframe">
                 {record.config.backtest_config.timeframe}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { useShow, useNavigation } from '@refinedev/core';
+import { useShow, useNavigation, useCreate } from '@refinedev/core';
 import { Show, DateField } from '@refinedev/antd';
 import {
   Card,
@@ -15,11 +15,13 @@ import {
   Button,
   Divider,
   Collapse,
+  Tooltip,
 } from 'antd';
 import {
   ArrowUpOutlined,
   ArrowDownOutlined,
   LinkOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import type { BacktestJob, BacktestResult, JobStatus } from '@providers/types';
 import { ProfitCurve } from '@components/charts/ProfitCurve';
@@ -107,6 +109,7 @@ interface BacktestJobWithResult extends BacktestJob {
 
 export const BacktestShow: React.FC = () => {
   const { show: showResource } = useNavigation();
+  const { mutate: createBacktest, isLoading: isRetrying } = useCreate();
   const { queryResult } = useShow<BacktestJobWithResult>({
     liveMode: 'auto', // Enable real-time updates
   });
@@ -116,8 +119,53 @@ export const BacktestShow: React.FC = () => {
   const result = job?.result;
   const trades = parseTrades(result?.trades_json);
 
+  const handleRetry = () => {
+    if (!job) return;
+    createBacktest({
+      resource: 'backtests',
+      values: {
+        strategy_id: job.strategy_id,
+        config: job.config,
+        priority: job.priority,
+      },
+      successNotification: {
+        message: 'Backtest resubmitted successfully',
+        type: 'success',
+      },
+      errorNotification: {
+        message: 'Failed to retry backtest',
+        type: 'error',
+      },
+    }, {
+      onSuccess: (data) => {
+        const newId = data?.data?.id;
+        if (newId) {
+          showResource('backtests', newId);
+        }
+      },
+    });
+  };
+
   return (
-    <Show isLoading={isLoading}>
+    <Show
+      isLoading={isLoading}
+      headerButtons={({ defaultButtons }) => (
+        <>
+          {defaultButtons}
+          {job && (
+            <Tooltip title="Create a new backtest with the same configuration">
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={handleRetry}
+                loading={isRetrying}
+              >
+                Retry
+              </Button>
+            </Tooltip>
+          )}
+        </>
+      )}
+    >
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         {/* Job Information */}
         <Card title="Backtest Job Information">
@@ -471,7 +519,7 @@ export const BacktestShow: React.FC = () => {
               </Descriptions.Item>
               <Descriptions.Item label="Pairs" span={2}>
                 <Space wrap>
-                  {job.config.pairs.map((pair) => (
+                  {(job.config.pairs || []).map((pair) => (
                     <Tag key={pair}>{pair}</Tag>
                   ))}
                 </Space>

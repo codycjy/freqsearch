@@ -1,5 +1,5 @@
 import { List, useTable, FilterDropdown, getDefaultSortOrder, ShowButton } from "@refinedev/antd";
-import { Table, Tag, Input, Select, Space, Card, Statistic, Row, Col, Typography, Tooltip } from "antd";
+import { Table, Tag, Input, Select, Card, Statistic, Row, Col, Typography, Tooltip } from "antd";
 import { useCustom } from "@refinedev/core";
 import { SearchOutlined, ExperimentOutlined } from "@ant-design/icons";
 
@@ -30,7 +30,7 @@ const complexityLabels: Record<string, string> = {
 };
 
 export const FactorList = () => {
-  const { tableProps, sorters, filters } = useTable({
+  const { tableProps, sorters } = useTable({
     resource: "factors",
     syncWithLocation: true,
     pagination: {
