@@ -12,6 +12,9 @@ class LLMModelSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    # Provider switch: "openrouter" or "azure"
+    provider: str = Field("openrouter", alias="LLM_PROVIDER")
+
     # API keys
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openrouter_api_key: str = Field("", alias="OPENROUTER_API_KEY")
@@ -23,6 +26,9 @@ class LLMModelSettings(BaseSettings):
     scout_model: str = Field("google/gemini-3-flash-preview", alias="LLM_SCOUT_MODEL")
     engineer_model: str = Field("google/gemini-3-pro-preview", alias="LLM_ENGINEER_MODEL")
     analyst_model: str = Field("google/gemini-3-pro-preview", alias="LLM_ANALYST_MODEL")
+
+    # Azure-specific settings
+    azure_api_version: str = Field("2024-05-01-preview", alias="AZURE_OPENAI_API_VERSION")
 
     # Model parameters
     temperature: float = Field(0.1, alias="LLM_TEMPERATURE")

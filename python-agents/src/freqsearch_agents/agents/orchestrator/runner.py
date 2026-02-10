@@ -126,7 +126,10 @@ class OrchestratorRunner:
 
                     result = await graph.ainvoke(
                         iteration_state,
-                        config={"configurable": {"thread_id": f"{run_id}-baseline"}},
+                        config={
+                            "configurable": {"thread_id": f"{run_id}-baseline"},
+                            "recursion_limit": 100,
+                        },
                     )
 
                     await context.save_iteration_result(client, result)
@@ -211,7 +214,10 @@ class OrchestratorRunner:
 
                     result = await graph.ainvoke(
                         iteration_state,
-                        config={"configurable": {"thread_id": f"{run_id}-iter-{iteration}"}},
+                        config={
+                            "configurable": {"thread_id": f"{run_id}-iter-{iteration}"},
+                            "recursion_limit": 100,
+                        },
                     )
 
                     await context.save_iteration_result(client, result)

@@ -1,28 +1,43 @@
-"""LLM client wrappers with per-agent model support via OpenRouter."""
+"""LLM client wrappers with per-agent model support. Supports OpenRouter and Azure OpenAI."""
 
 from functools import lru_cache
 from typing import Literal
 
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import AzureChatOpenAI, ChatOpenAI, OpenAIEmbeddings
 
 from ..config import get_settings
 
 AgentType = Literal["scout", "engineer", "analyst"]
 
 
-def get_llm_for_agent(agent_type: AgentType) -> ChatOpenAI:
-    """Get LLM instance configured for specific agent.
-
-    Args:
-        agent_type: The agent type (scout, engineer, analyst)
-
-    Returns:
-        ChatOpenAI instance configured with the agent's model
-    """
+def _create_llm(model: str, temperature: float, max_tokens: int) -> ChatOpenAI | AzureChatOpenAI:
+    """Create LLM instance based on provider setting."""
     settings = get_settings()
     llm_settings = settings.llm
 
-    # Get model for this agent
+    if llm_settings.provider == "azure":
+        return AzureChatOpenAI(
+            azure_deployment=model,
+            api_version=llm_settings.azure_api_version,
+            # temperature=temperature, # gpt does not accept temperature
+            max_tokens=max_tokens,
+        )
+
+    # Default: OpenRouter
+    return ChatOpenAI(
+        api_key=llm_settings.openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1",
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+
+def get_llm_for_agent(agent_type: AgentType) -> ChatOpenAI | AzureChatOpenAI:
+    """Get LLM instance configured for specific agent."""
+    settings = get_settings()
+    llm_settings = settings.llm
+
     model_map = {
         "scout": llm_settings.scout_model,
         "engineer": llm_settings.engineer_model,
@@ -30,29 +45,16 @@ def get_llm_for_agent(agent_type: AgentType) -> ChatOpenAI:
     }
     model = model_map.get(agent_type, llm_settings.default_model)
 
-    # Use OpenRouter API
-    return ChatOpenAI(
-        api_key=llm_settings.openrouter_api_key,
-        base_url="https://openrouter.ai/api/v1",
-        model=model,
-        temperature=llm_settings.temperature,
-        max_tokens=llm_settings.max_tokens,
-    )
+    return _create_llm(model, llm_settings.temperature, llm_settings.max_tokens)
 
 
 @lru_cache
-def get_llm() -> ChatOpenAI:
+def get_llm() -> ChatOpenAI | AzureChatOpenAI:
     """Get cached default LLM instance (uses default model)."""
     settings = get_settings()
     llm_settings = settings.llm
 
-    return ChatOpenAI(
-        api_key=llm_settings.openrouter_api_key,
-        base_url="https://openrouter.ai/api/v1",
-        model=llm_settings.default_model,
-        temperature=llm_settings.temperature,
-        max_tokens=llm_settings.max_tokens,
-    )
+    return _create_llm(llm_settings.default_model, llm_settings.temperature, llm_settings.max_tokens)
 
 
 @lru_cache
@@ -66,15 +68,7 @@ def get_embeddings() -> OpenAIEmbeddings:
 
 
 def get_llm_with_structured_output(output_schema: type, agent_type: AgentType | None = None):
-    """Get LLM configured for structured output.
-
-    Args:
-        output_schema: Pydantic model class for output structure
-        agent_type: Optional agent type for model selection
-
-    Returns:
-        LLM bound to the output schema
-    """
+    """Get LLM configured for structured output."""
     if agent_type:
         llm = get_llm_for_agent(agent_type)
     else:

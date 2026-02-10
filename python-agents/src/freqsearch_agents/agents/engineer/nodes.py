@@ -277,8 +277,8 @@ async def generate_code_node(
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
 
-                logger.debug(
-                    "Executing tool",
+                logger.info(
+                    "Executing factor tool",
                     tool=tool_name,
                     args=tool_args,
                 )
@@ -293,8 +293,8 @@ async def generate_code_node(
                 if tool_name in tool_map:
                     try:
                         tool_result = tool_map[tool_name].invoke(tool_args)
-                        logger.debug(
-                            "Tool execution successful",
+                        logger.info(
+                            "Factor tool execution successful",
                             tool=tool_name,
                             result_length=len(str(tool_result)),
                         )
