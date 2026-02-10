@@ -1,4 +1,4 @@
-import { useShow, useNavigation } from '@refinedev/core';
+import { useShow, useNavigation, useCreate } from '@refinedev/core';
 import { Show, DateField } from '@refinedev/antd';
 import {
   Typography,
@@ -12,11 +12,13 @@ import {
   Table,
   Button,
   Spin,
+  message,
 } from 'antd';
 import {
   RocketOutlined,
   TrophyOutlined,
   LinkOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import type { OptimizationRun, OptimizationIteration, OptimizationStatus } from '@providers/types';
 import { OptimizationControlPanel } from './control';
@@ -58,10 +60,37 @@ export const OptimizationShow = () => {
   const { data, isLoading } = queryResult;
   const record = data?.data;
   const { show } = useNavigation();
+  const { mutate: createOptimization, isLoading: isRetrying } = useCreate();
 
   // Use iterations from the record (populated by dataProvider)
   const iterations = record?.iterations || [];
   const iterationsLoading = queryResult.isLoading;
+
+  const handleRetry = () => {
+    if (!record) return;
+    createOptimization(
+      {
+        resource: 'optimizations',
+        values: {
+          name: `${record.name} (retry)`,
+          base_strategy_id: record.base_strategy_id,
+          config: record.config,
+        },
+      },
+      {
+        onSuccess: (data) => {
+          message.success('Optimization retry started');
+          const newId = data?.data?.run?.id || data?.data?.id;
+          if (newId) {
+            show('optimizations', newId);
+          }
+        },
+        onError: () => {
+          message.error('Failed to retry optimization');
+        },
+      },
+    );
+  };
 
   if (isLoading || !record) {
     return (
@@ -162,6 +191,13 @@ export const OptimizationShow = () => {
               showLabels
             />
           )}
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={handleRetry}
+            loading={isRetrying}
+          >
+            Retry
+          </Button>
         </>
       )}
     >
